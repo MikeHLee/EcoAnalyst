@@ -1,0 +1,287 @@
+{
+  "network_id": "e8f97bbd-8939-4852-a3c4-709c960cb205",
+  "name": "California Produce Supply Chain",
+  "description": "Farm to retail distribution network for fresh produce",
+  "network_type": "supply_chain",
+  "created_at": "2026-01-15T15:51:58.951157",
+  "updated_at": "2026-01-15T15:51:58.951422",
+  "nodes": [
+    {
+      "node_id": "82d924d7-2276-4442-8150-46f7cf61b527",
+      "node_type": "producer",
+      "node_class": "OrganicFarm",
+      "name": "Salinas Valley Farm",
+      "properties": {
+        "capacity": {
+          "value": 5000.0,
+          "unit": "kg/day"
+        },
+        "efficiency": 0.95,
+        "lifetime_years": 10,
+        "waste_rate": 0.05,
+        "degradation_rate": null,
+        "count": 1
+      },
+      "financials": {
+        "capex": {
+          "value": 100000.0,
+          "currency": "USD"
+        },
+        "opex_annual": {
+          "value": 50000.0,
+          "currency": "USD"
+        },
+        "installation": null,
+        "waste_cost_per_unit": {
+          "value": 0.5,
+          "currency": "USD"
+        },
+        "salvage_value": null
+      },
+      "operations": null,
+      "position_x": 0.0,
+      "position_y": 0.0,
+      "metadata": {}
+    },
+    {
+      "node_id": "032b2004-eb11-4565-96f3-27325e1365d4",
+      "node_type": "handler",
+      "node_class": "ColdStorage",
+      "name": "Regional Cold Storage Facility",
+      "properties": {
+        "capacity": {
+          "value": 20000.0,
+          "unit": "kg"
+        },
+        "efficiency": 0.98,
+        "lifetime_years": 10,
+        "waste_rate": 0.02,
+        "degradation_rate": null,
+        "count": 1
+      },
+      "financials": {
+        "capex": {
+          "value": 500000.0,
+          "currency": "USD"
+        },
+        "opex_annual": {
+          "value": 75000.0,
+          "currency": "USD"
+        },
+        "installation": null,
+        "waste_cost_per_unit": {
+          "value": 1.0,
+          "currency": "USD"
+        },
+        "salvage_value": null
+      },
+      "operations": {
+        "storage_days": 14.0,
+        "temperature_range": {
+          "min": 2,
+          "max": 8,
+          "unit": "C"
+        },
+        "humidity_range": null,
+        "annual_throughput": null,
+        "operating_hours": null,
+        "constraints": []
+      },
+      "position_x": 0.0,
+      "position_y": 0.0,
+      "metadata": {}
+    },
+    {
+      "node_id": "6da49d76-ab1b-4373-b1ca-63486b1246ad",
+      "node_type": "processor",
+      "node_class": "PackagingFacility",
+      "name": "Fresh Pack Facility",
+      "properties": {
+        "capacity": {
+          "value": 3000.0,
+          "unit": "kg/day"
+        },
+        "efficiency": 0.96,
+        "lifetime_years": 10,
+        "waste_rate": 0.04,
+        "degradation_rate": null,
+        "count": 1
+      },
+      "financials": {
+        "capex": {
+          "value": 250000.0,
+          "currency": "USD"
+        },
+        "opex_annual": {
+          "value": 60000.0,
+          "currency": "USD"
+        },
+        "installation": null,
+        "waste_cost_per_unit": null,
+        "salvage_value": null
+      },
+      "operations": null,
+      "position_x": 0.0,
+      "position_y": 0.0,
+      "metadata": {}
+    },
+    {
+      "node_id": "cfe6fe29-5a38-4064-8bf6-da5317dd88d6",
+      "node_type": "consumer",
+      "node_class": "Retailer",
+      "name": "Whole Foods Market",
+      "properties": {
+        "capacity": {
+          "value": 500.0,
+          "unit": "kg/day"
+        },
+        "efficiency": 0.92,
+        "lifetime_years": 10,
+        "waste_rate": 0.08,
+        "degradation_rate": null,
+        "count": 1
+      },
+      "financials": {
+        "capex": {
+          "value": 0.0,
+          "currency": "USD"
+        },
+        "opex_annual": {
+          "value": 10000.0,
+          "currency": "USD"
+        },
+        "installation": null,
+        "waste_cost_per_unit": {
+          "value": 4.0,
+          "currency": "USD"
+        },
+        "salvage_value": null
+      },
+      "operations": null,
+      "position_x": 0.0,
+      "position_y": 0.0,
+      "metadata": {}
+    },
+    {
+      "node_id": "07ac7895-d975-48e7-9050-b68c164b80f4",
+      "node_type": "service",
+      "node_class": "ColdChainLogistics",
+      "name": "Premium Cold Transport",
+      "properties": {
+        "capacity": {
+          "value": 10000.0,
+          "unit": "kg/day"
+        },
+        "efficiency": 0.99,
+        "lifetime_years": 10,
+        "waste_rate": 0.01,
+        "degradation_rate": null,
+        "count": 5
+      },
+      "financials": {
+        "capex": {
+          "value": 150000.0,
+          "currency": "USD"
+        },
+        "opex_annual": {
+          "value": 40000.0,
+          "currency": "USD"
+        },
+        "installation": null,
+        "waste_cost_per_unit": null,
+        "salvage_value": null
+      },
+      "operations": null,
+      "position_x": 0.0,
+      "position_y": 0.0,
+      "metadata": {}
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "85c2f102-3518-4a7d-be65-9a677f10927f",
+      "source_node_id": "82d924d7-2276-4442-8150-46f7cf61b527",
+      "target_node_id": "032b2004-eb11-4565-96f3-27325e1365d4",
+      "relationship_type": "inventory_flow",
+      "flow": {
+        "max_rate": {
+          "value": 4500.0,
+          "unit": "kg/day"
+        },
+        "min_rate": null,
+        "efficiency": 0.97,
+        "direction": "unidirectional",
+        "transport_time": {
+          "value": 4.0,
+          "unit": "hours"
+        },
+        "waste_rate": 0.03
+      },
+      "constraints": [],
+      "metadata": {}
+    },
+    {
+      "edge_id": "98633e84-50a1-4e65-ae39-81acfcc2b40f",
+      "source_node_id": "032b2004-eb11-4565-96f3-27325e1365d4",
+      "target_node_id": "6da49d76-ab1b-4373-b1ca-63486b1246ad",
+      "relationship_type": "inventory_flow",
+      "flow": {
+        "max_rate": {
+          "value": 3000.0,
+          "unit": "kg/day"
+        },
+        "min_rate": null,
+        "efficiency": 0.99,
+        "direction": "unidirectional",
+        "transport_time": {
+          "value": 1.0,
+          "unit": "hours"
+        },
+        "waste_rate": 0.01
+      },
+      "constraints": [],
+      "metadata": {}
+    },
+    {
+      "edge_id": "ce5824d1-a611-4dc8-afde-5e48a491f73f",
+      "source_node_id": "6da49d76-ab1b-4373-b1ca-63486b1246ad",
+      "target_node_id": "cfe6fe29-5a38-4064-8bf6-da5317dd88d6",
+      "relationship_type": "inventory_flow",
+      "flow": {
+        "max_rate": {
+          "value": 500.0,
+          "unit": "kg/day"
+        },
+        "min_rate": null,
+        "efficiency": 0.98,
+        "direction": "unidirectional",
+        "transport_time": {
+          "value": 2.0,
+          "unit": "hours"
+        },
+        "waste_rate": 0.02
+      },
+      "constraints": [],
+      "metadata": {}
+    },
+    {
+      "edge_id": "198dfb18-b97e-4f99-abdd-f92ff3e5b150",
+      "source_node_id": "07ac7895-d975-48e7-9050-b68c164b80f4",
+      "target_node_id": "032b2004-eb11-4565-96f3-27325e1365d4",
+      "relationship_type": "service_flow",
+      "flow": {
+        "max_rate": {
+          "value": 10000.0,
+          "unit": "kg/day"
+        },
+        "min_rate": null,
+        "efficiency": 1.0,
+        "direction": "unidirectional",
+        "transport_time": null,
+        "waste_rate": null
+      },
+      "constraints": [],
+      "metadata": {}
+    }
+  ]
+}

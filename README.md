@@ -1,147 +1,284 @@
-# Waste Networks Analysis
+# EcoAnalyst
 
-A comprehensive library for analyzing waste in supply chain networks using advanced network analysis and causal inference.
+A comprehensive library for understanding **ecosystems**, **economies**, and **abstract physically interacting networks** through graph-based modeling, causal inference, and economic analysis.
 
-## What is This?
+## What is EcoAnalyst?
 
-Think of a food supply chain as a complex web of relationships between different players: farmers, processors, warehouses, stores, and service providers. Each connection in this web can lead to food waste, but understanding exactly how and why waste occurs is challenging. This tool helps solve that challenge by:
+EcoAnalyst provides tools for modeling and analyzing complex networks where **mass**, **energy**, and **information** flow between interconnected entities. The library applies graph theory, causal inference, and economic analysis to understand physical, economic, and ecological systems.
 
-1. **Mapping the Network**: Creating a digital twin of your supply chain that shows how food, services, and money flow between different players
-2. **Finding Waste Hotspots**: Using advanced math to identify where waste is most likely to occur
-3. **Understanding Causes**: Using AI and statistics to figure out what factors (like storage time or temperature) most affect waste
-4. **Testing Solutions**: Allowing you to simulate different solutions (like better cold storage) to see their impact
+### Applications
 
-## Key Concepts
+- **Supply Chains**: Track material flows, identify loss points, optimize logistics
+- **Energy Systems**: Model power grids, analyze transmission losses, optimize distribution
+- **Ecological Networks**: Study nutrient flows, energy transfer, population dynamics
+- **Economic Systems**: Analyze resource allocation, financial flows, market inefficiencies
+- **Information Networks**: Model data flows, identify bottlenecks, optimize routing
 
-### Players in the Network
+### Core Capabilities
 
-- **Initial Producers** (e.g., farms): Where food enters the system
-- **Food Processors** (e.g., packaging facilities): Where food is transformed
-- **Food Handlers** (e.g., warehouses): Where food is stored and moved
-- **End Consumers** (e.g., stores): Where food exits the system
-- **Service Providers** (e.g., cold chain services): Who help reduce waste
+1. **Model the Network**: Create typed, validated graph representations with nodes (producers, processors, handlers, consumers) and edges (inventory, service, currency, energy, information flows)
+2. **Quantify Flows**: Track mass, energy, and information transfer with loss/efficiency metrics
+3. **Find Inefficiencies**: Identify loss hotspots and bottlenecks using graph algorithms
+4. **Understand Causes**: Use Bayesian inference to discover what factors drive losses
+5. **Optimize Paths**: Find minimum-loss routes through the network
+6. **Calculate Economics**: Assess total cost of ownership and economic impact
 
-### Types of Connections
+## Key Features (v2.0)
 
-- **Inventory Flow** (solid blue lines): Shows how food moves
-- **Service Flow** (dashed red lines): Shows who's helping who
-- **Currency Flow** (dotted green lines): Shows how money moves
-
-### Waste Calculation
-
-We calculate waste in three ways:
-1. **Static**: Fixed percentage (e.g., 5% always lost)
-2. **Time-based**: Increases with time (e.g., 1% per day)
-3. **Multi-factor**: Based on conditions (e.g., temperature, humidity)
-
-## Features
-
-- Advanced network model with flow-specific path finding
-- Bayesian causal analysis with regression capabilities
-- Visualization tools for network structure and statistical analysis
-- Inventory loss prediction and analysis
+- **Typed Node/Edge System**: Pydantic-validated schemas for robust data modeling
+- **Multi-Domain Support**: Model supply chains, energy grids, ecological systems, or economic networks
+- **Flow Analysis**: Track mass, energy, currency, and information flows with loss/efficiency metrics
+- **RESTful API**: FastAPI endpoints for CRUD operations and analysis
+- **MCP Integration**: AI assistant access via Model Context Protocol
+- **Economic Analysis**: TCO, loss cost calculation, and scenario comparison
+- **Path Optimization**: Find minimum-loss paths through networks
+- **Causal Analysis**: Bayesian inference for understanding loss drivers and system dynamics
 
 ## Installation
 
-1. Create and activate a virtual environment:
 ```bash
+# Clone the repository
+git clone https://github.com/MikeHLee/ecoanalyst.git
+cd ecoanalyst
+
+# Create virtual environment
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
 
-2. Install dependencies:
-```bash
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-## Understanding the Output
+## Quick Start
 
-### 1. Network Map (network_visualization.png)
+### Python API
 
-This is like a Google Maps for your supply chain:
-- Each dot (node) is a player in your system
-- Lines between dots show how they're connected
-- Colors tell you what type of player each dot represents
-- Line styles show what's flowing between players
+#### Example 1: Supply Chain (Mass Flow)
 
-Key things to look for:
-- Thicker lines = more flow
-- Red highlights = potential problem areas
-- Numbers on lines = amount of waste
+```python
+from src.ecoanalyst import (
+    EcosystemNetwork, 
+    EconomicAnalysis,
+    NodeType, 
+    RelationshipType
+)
 
-### 2. Waste Analysis (waste_breakdown.png)
+# Create a supply chain network
+network = EcosystemNetwork(
+    name="Regional Food Distribution",
+    description="Farm to retail with cold chain",
+    network_type="supply_chain"
+)
 
-This chart shows where waste is happening:
-- Each bar represents a location
-- Height of bar shows how much waste occurs there
-- Colors match the network map for easy reference
-- Total waste shown at top
+# Add producer (mass input)
+farm_id = network.add_node(
+    node_type=NodeType.PRODUCER,
+    node_class="Farm",
+    name="Organic Farm",
+    properties={
+        "capacity": {"value": 5000, "unit": "kg/day"},
+        "efficiency": 0.95,
+        "waste_rate": 0.05,  # 5% mass loss
+    }
+)
 
-### 3. Causal Analysis (causal_results.png)
+# Add handler (mass storage)
+storage_id = network.add_node(
+    node_type=NodeType.HANDLER,
+    node_class="ColdStorage",
+    name="Cold Storage Facility",
+    properties={
+        "capacity": {"value": 20000, "unit": "kg"},
+        "waste_rate": 0.02,  # 2% spoilage
+    },
+    operations={
+        "temperature_range": {"min": 2, "max": 8, "unit": "C"}
+    }
+)
 
-This helps understand why waste occurs:
-- Numbers show how strong each factor's effect is
-- Larger numbers = stronger effect
-- ± shows uncertainty in the measurement
-- R² score (0-1) shows how well we understand the system
+# Connect with inventory flow (mass transfer)
+network.add_edge(
+    source_node_id=farm_id,
+    target_node_id=storage_id,
+    relationship_type=RelationshipType.INVENTORY_FLOW,
+    flow={
+        "max_rate": {"value": 4500, "unit": "kg/day"},
+        "efficiency": 0.97,
+        "waste_rate": 0.03,  # 3% transport loss
+    }
+)
 
-Example interpretation:
+# Analyze losses
+analysis = EconomicAnalysis(network)
+result = analysis.calculate_waste_cost(
+    pricing_data={"Farm": 2.00, "ColdStorage": 2.50}
+)
+print(f"Total mass loss cost: ${result['total_waste_cost']:,.2f}")
 ```
-Storage Time: 0.32 ± 0.017 (R² = 0.85)
+
+#### Example 2: Energy Grid (Energy Flow)
+
+```python
+# Create an energy network
+grid = EcosystemNetwork(
+    name="Regional Power Grid",
+    description="Generation to distribution",
+    network_type="energy"
+)
+
+# Power plant (energy producer)
+plant_id = grid.add_node(
+    node_type=NodeType.PRODUCER,
+    node_class="SolarFarm",
+    name="Desert Solar Array",
+    properties={
+        "capacity": {"value": 100, "unit": "MW"},
+        "efficiency": 0.22,  # 22% solar conversion
+        "waste_rate": 0.02,  # 2% inverter loss
+    }
+)
+
+# Substation (energy handler)
+substation_id = grid.add_node(
+    node_type=NodeType.HANDLER,
+    node_class="Substation",
+    name="Regional Substation",
+    properties={
+        "capacity": {"value": 150, "unit": "MW"},
+        "efficiency": 0.98,
+        "waste_rate": 0.01,  # 1% transformer loss
+    }
+)
+
+# Transmission line (energy flow)
+grid.add_edge(
+    source_node_id=plant_id,
+    target_node_id=substation_id,
+    relationship_type=RelationshipType.ENERGY_FLOW,
+    flow={
+        "max_rate": {"value": 95, "unit": "MW"},
+        "efficiency": 0.94,  # 6% transmission loss
+        "waste_rate": 0.06,
+    }
+)
 ```
-Means:
-- Every day in storage increases waste by about 0.32%
-- We're quite certain (small ± number)
-- Our model explains 85% of waste variation (good fit)
 
-## Examples
+### CLI Testing
 
-See the `examples/` directory for detailed examples:
+```bash
+# Run feature tests
+python admin_cli.py test_features
 
-### 1. Basic Network (basic_example.py)
-Shows how to:
-- Create a simple supply chain
-- Add basic waste calculations
-- Visualize the network
+# Run interactive demo
+python admin_cli.py demo
+```
 
-### 2. Advanced Analysis (advanced_example.py)
-Shows how to:
-- Use causal analysis
-- Model complex relationships
-- Test different solutions
+### REST API
 
-### 3. Real-world Demo (real_world_demo.py)
-A complete example using:
-- Real-world-like data
-- Multiple node types
-- All flow types
-- Complex waste functions
+```bash
+# Start the API server
+uvicorn src.ecoanalyst.api:app --reload
 
-## How to Use Results
+# Create a network
+curl -X POST http://localhost:8000/networks \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user1" \
+  -d '{"name": "My Network", "network_type": "supply_chain"}'
+```
 
-1. **Find Problem Areas**
-   - Look for red highlights in network map
-   - Check highest bars in waste breakdown
-   - Focus on strongest effects in causal analysis
+### MCP Server (AI Assistant Integration)
 
-2. **Choose Solutions**
-   - Use service providers where effects are strongest
-   - Optimize paths with least waste
-   - Target interventions based on causal factors
+Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
-3. **Monitor Progress**
-   - Track total system waste over time
-   - Watch for changes in causal factors
-   - Measure solution effectiveness
+```json
+{
+  "mcpServers": {
+    "ecoanalyst": {
+      "command": "python3",
+      "args": ["/path/to/ecoanalyst/mcp_server.py"],
+      "transport": "stdio"
+    }
+  }
+}
+```
+
+## Node Types
+
+Nodes represent entities that produce, process, handle, or consume flows of mass, energy, or information.
+
+| Type | Description | Supply Chain | Energy System | Ecological | Economic |
+|------|-------------|--------------|---------------|------------|----------|
+| `producer` | Where flows enter | Farms, mines | Power plants, solar | Primary producers | Capital sources |
+| `processor` | Transforms flows | Factories, mills | Refineries, converters | Decomposers | Processors |
+| `handler` | Stores/moves flows | Warehouses, ports | Batteries, substations | Reservoirs | Banks, exchanges |
+| `consumer` | Where flows exit | Retail, end users | Loads, consumers | Apex predators | End consumers |
+| `service` | Supporting services | Cold chain, QA | Maintenance, control | Symbiotic species | Service providers |
+| `grid` | External supply/sink | Imports/exports | Grid connection | Environment | External markets |
+
+## Relationship Types
+
+Edges represent flows of mass, energy, currency, or information between nodes.
+
+| Type | Flow Category | Description | Examples |
+|------|---------------|-------------|----------|
+| `inventory_flow` | Mass | Physical goods/materials | Food, raw materials, products |
+| `energy_flow` | Energy | Power/energy transfer | Electricity, heat, fuel |
+| `information_flow` | Information | Data/signals | Sensor data, control signals |
+| `currency_flow` | Economic | Financial transactions | Payments, investments |
+| `service_flow` | Service | Service provision | Maintenance, logistics |
+| `waste_flow` | Mass/Energy | Waste/byproduct movement | Emissions, waste disposal |
+
+## Project Structure
+
+```
+ecoanalyst/
+├── src/
+│   ├── ecoanalyst/           # New typed API (v2.0)
+│   │   ├── __init__.py
+│   │   ├── models.py         # Pydantic schemas
+│   │   ├── network.py        # EcosystemNetwork class
+│   │   ├── analysis.py       # EconomicAnalysis class
+│   │   └── api.py            # FastAPI endpoints
+│   ├── network_model.py      # Legacy network model
+│   ├── advanced_network.py   # Advanced features
+│   ├── causal_analysis.py    # Bayesian inference
+│   └── network_viz.py        # Visualization
+├── examples/                  # Example scripts
+├── whitepaper/               # Academic documentation
+├── mcp_server.py             # MCP server for AI assistants
+├── admin_cli.py              # CLI admin tool
+└── requirements.txt
+```
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/networks` | Create network |
+| GET | `/networks` | List networks |
+| GET | `/networks/{id}` | Get network |
+| DELETE | `/networks/{id}` | Delete network |
+| POST | `/networks/{id}/nodes` | Add node |
+| DELETE | `/networks/{id}/nodes/{node_id}` | Delete node |
+| POST | `/networks/{id}/edges` | Add edge |
+| POST | `/networks/{id}/calculate-waste` | Calculate waste |
+| GET | `/networks/{id}/optimize-paths` | Find optimal path |
+| GET | `/networks/{id}/hotspots` | Identify hotspots |
 
 ## Documentation
 
-For detailed mathematical formulation and methodology, see the whitepaper in the `whitepaper/` directory.
+- **Whitepaper**: See `whitepaper/` for mathematical formulation
+- **API Docs**: Run server and visit `http://localhost:8000/docs`
+- **Examples**: See `examples/` directory
+
+## Migration from v1.x
+
+The legacy `WasteNetwork` class is still available in `src/network_model.py`. For new projects, use the typed `EcosystemNetwork` class from `src/ecoanalyst/`.
 
 ## Contributing
 
-Contributions are welcome! Please read our contributing guidelines and code of conduct.
+Contributions welcome! Please read our contributing guidelines.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License - see LICENSE file for details.
