@@ -10,6 +10,8 @@ EXPECTED_TOOLS = {
     "create_network", "list_networks", "get_network", "delete_network",
     "add_node", "add_edge", "calculate_waste", "find_minimum_waste_path",
     "identify_hotspots", "compare_paths", "export_flow_graph", "import_flow_graph",
+    "add_causal_variable", "simulate_intervention", "compare_interventions",
+    "causal_adjustment_set",
 }
 
 
@@ -83,3 +85,25 @@ def test_server_reports_tool_errors_with_message():
     with pytest.raises(Exception) as info:
         asyncio.run(server.call_tool("get_network", {"network_id": "nope"}))
     assert "Network not found: nope" in str(info.value)
+
+
+def test_causal_tools():
+    net, s, m, t = build_routing_network()
+    tools.add_causal_variable(net, "heat", intercept=20.0, noise_sd=2.0)
+    tools.add_causal_variable(
+        net, "hub_loss", kind="rate", parents=["heat"], intercept=-6.0,
+        coefficients={"heat": 0.2}, noise_sd=0.1, binds=f"node:{m}:waste_rate",
+    )
+    with pytest.raises(ValueError, match="not in the network"):
+        tools.add_causal_variable(net, "ghost", kind="rate", binds="node:missing:waste_rate")
+    assert "ghost" not in tools.NETWORKS[net].causal.variables
+
+    sim = tools.simulate_intervention(net, "path_delivered", path=[s, m, t], n=300, seed=1,
+                                      edge_kinds=["inventory"])
+    assert set(sim["summary"]) >= {"path_delivered", "heat", "hub_loss"}
+    eff = tools.compare_interventions(net, "path_delivered", {"heat": 15.0}, {"heat": 35.0},
+                                      path=[s, m, t], n=300, edge_kinds=["inventory"])
+    assert eff["effect"] > 0
+    with pytest.raises(ValueError, match="path is required"):
+        tools.simulate_intervention(net, "path_waste", n=10)
+    assert tools.causal_adjustment_set(net, "heat", "hub_loss")["adjustment_set"] == []

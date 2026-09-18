@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 dependencies = [
-    "networkx>=3.2",
+    "networkx>=3.3",
     "numpy>=1.26",
     "pydantic>=2.6",
 ]

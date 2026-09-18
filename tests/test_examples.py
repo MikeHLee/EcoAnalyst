@@ -30,3 +30,11 @@ def test_legacy_drawing_examples(name, tmp_path):
     pytest.importorskip("matplotlib")
     result = run_example(name, tmp_path)
     assert result.returncode == 0, result.stderr
+
+
+def test_causal_example(tmp_path):
+    result = run_example("causal_cold_chain.py", tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "Fitted 5 equations on 365 days" in result.stdout
+    assert "adjust for: ['power_outage']" in result.stdout
+    assert "Backup power raises the delivered fraction" in result.stdout

@@ -165,6 +165,9 @@ class EcosystemNetwork:
         self.graph = nx.MultiDiGraph()
         self.nodes: Dict[str, EcosystemNode] = {}
         self.edges: Dict[str, EcosystemEdge] = {}
+        # Optional ecoanalyst.causal.CausalModel whose variables drive node
+        # and edge parameters (see simulate / compare in that module).
+        self.causal = None
 
     # ------------------------------------------------------------------
     # Building the graph
@@ -701,6 +704,7 @@ class EcosystemNetwork:
             "updated_at": self.updated_at,
             "nodes": [node.to_dict() for node in self.nodes.values()],
             "edges": [edge.to_dict() for edge in self.edges.values()],
+            **({"causal": self.causal.to_dict()} if self.causal is not None else {}),
         }
 
     @classmethod

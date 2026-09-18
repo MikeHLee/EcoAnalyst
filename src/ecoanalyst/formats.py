@@ -104,9 +104,23 @@ def from_native(data: Dict[str, Any], cls=None) -> "EcosystemNetwork":
         network.add_node_model(EcosystemNode.model_validate(node_data))
     for edge_data in data.get("edges", []):
         network.add_edge_model(EcosystemEdge.model_validate(edge_data))
+    _attach_causal(network, data)
 
     network.updated_at = data.get("updated_at", network.updated_at)
     return network
+
+
+def _attach_causal(network: "EcosystemNetwork", data: Dict[str, Any]) -> None:
+    """Load an optional "causal" section and check its bindings."""
+    if not data.get("causal"):
+        return
+    from .causal import CausalModel
+
+    model = CausalModel.from_dict(data["causal"])
+    problems = model.check_bindings(network)
+    if problems:
+        raise ValueError("causal section: " + "; ".join(problems))
+    network.causal = model
 
 
 def from_waste_network_v1(data: Dict[str, Any], cls=None) -> "EcosystemNetwork":
@@ -214,6 +228,7 @@ def to_flow_graph(network: "EcosystemNetwork") -> Dict[str, Any]:
         "settings": {"efficiency_mode": network.efficiency_mode},
         "actors": actors,
         "flows": flows,
+        **({"causal": network.causal.to_dict()} if network.causal is not None else {}),
     }
 
 
@@ -300,4 +315,5 @@ def from_flow_graph(data: Dict[str, Any], cls=None) -> "EcosystemNetwork":
         )
         network.add_edge_model(edge)
 
+    _attach_causal(network, data)
     return network

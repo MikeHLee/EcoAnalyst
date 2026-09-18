@@ -15,6 +15,7 @@ tool error.
 import functools
 from typing import Any, Callable, Dict, List, Optional
 
+from . import causal
 from .analysis import EconomicAnalysis
 from .network import EcosystemNetwork
 
@@ -248,6 +249,135 @@ def import_flow_graph(flow_graph: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def add_causal_variable(
+    network_id: str,
+    name: str,
+    kind: str = "continuous",
+    parents: Optional[List[str]] = None,
+    intercept: float = 0.0,
+    coefficients: Optional[Dict[str, float]] = None,
+    noise_sd: float = 1.0,
+    binds: Optional[str] = None,
+    observed: bool = True,
+    unit: Optional[str] = None,
+    description: str = "",
+) -> Dict[str, Any]:
+    """Add a variable to the network's causal graph (created on first use).
+
+    kind is continuous, rate (0 to 1, logit link), positive (log link), or
+    binary. The equation is linear on the link scale: intercept +
+    sum(coefficients[p] * parent_p) + noise with sd noise_sd. Parents must
+    be added first. binds attaches the variable to a network parameter, as
+    "node:<node_id>:<field>" (waste_rate, efficiency, degradation_rate,
+    capacity) or "edge:<edge_id>:<field>" (waste_rate, efficiency, max_rate).
+    Rate fields need a rate variable and capacity/max_rate a positive one.
+    """
+    network = _network(network_id)
+    if network.causal is None:
+        network.causal = causal.CausalModel()
+    variable = network.causal.add_variable(
+        name, kind=kind, parents=parents or [], intercept=intercept,
+        coefficients=coefficients, noise_sd=noise_sd, binds=binds,
+        observed=observed, unit=unit, description=description,
+    )
+    problems = network.causal.check_bindings(network)
+    if problems:
+        network.causal.remove_variable(name)
+        raise ValueError("; ".join(problems))
+    return {"network_id": network_id, "variable": variable.model_dump(mode="json", exclude_none=True)}
+
+
+def _outcome(network: EcosystemNetwork, outcome: str, path: Optional[List[str]],
+             source_node_id: Optional[str], target_node_id: Optional[str],
+             pricing_data: Optional[Dict[str, float]], edge_kinds: Optional[List[str]]):
+    if outcome == "path_waste":
+        return causal.path_waste(_need(path, "path"), edge_kinds)
+    if outcome == "path_delivered":
+        return causal.path_delivered(_need(path, "path"), edge_kinds)
+    if outcome == "best_route_delivered":
+        return causal.best_route_delivered(
+            _need(source_node_id, "source_node_id"), _need(target_node_id, "target_node_id"), edge_kinds)
+    if outcome == "waste_cost":
+        return causal.waste_cost(pricing_data)
+    if outcome == "path_cost":
+        return causal.path_cost(_need(path, "path"), pricing_data, edge_kinds=edge_kinds)
+    if network.causal is not None and outcome in network.causal.variables:
+        return outcome
+    raise ValueError(
+        "outcome must be path_waste, path_delivered, best_route_delivered, waste_cost, "
+        f"path_cost, or a causal variable name; got {outcome!r}"
+    )
+
+
+def _need(value, label):
+    if value is None:
+        raise ValueError(f"{label} is required for this outcome")
+    return value
+
+
+def simulate_intervention(
+    network_id: str,
+    outcome: str,
+    do: Optional[Dict[str, float]] = None,
+    n: int = 1000,
+    seed: Optional[int] = None,
+    path: Optional[List[str]] = None,
+    source_node_id: Optional[str] = None,
+    target_node_id: Optional[str] = None,
+    pricing_data: Optional[Dict[str, float]] = None,
+    edge_kinds: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Sample the causal graph, optionally under interventions, and summarize an outcome.
+
+    outcome is path_waste or path_delivered or path_cost (need path),
+    best_route_delivered (needs source_node_id and target_node_id),
+    waste_cost, or the name of a causal variable. do maps variable names to
+    fixed values. Returns mean, sd, and 5th/50th/95th percentiles of the
+    outcome and of every causal variable.
+    """
+    network = _network(network_id)
+    fn = _outcome(network, outcome, path, source_node_id, target_node_id, pricing_data, edge_kinds)
+    result = causal.simulate(network, {outcome: fn}, n=n, do=do, seed=seed)
+    return {"network_id": network_id, **result.to_dict()}
+
+
+def compare_interventions(
+    network_id: str,
+    outcome: str,
+    do_a: Dict[str, float],
+    do_b: Dict[str, float],
+    n: int = 1000,
+    seed: int = 0,
+    path: Optional[List[str]] = None,
+    source_node_id: Optional[str] = None,
+    target_node_id: Optional[str] = None,
+    pricing_data: Optional[Dict[str, float]] = None,
+    edge_kinds: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Average effect on an outcome of intervention do_a versus do_b (same noise in both runs).
+
+    outcome takes the same values as in simulate_intervention.
+    """
+    network = _network(network_id)
+    fn = _outcome(network, outcome, path, source_node_id, target_node_id, pricing_data, edge_kinds)
+    return {"network_id": network_id, "outcome": outcome,
+            **causal.compare(network, fn, do_a, do_b, n=n, seed=seed)}
+
+
+def causal_adjustment_set(network_id: str, treatment: str, outcome: str) -> Dict[str, Any]:
+    """Back-door adjustment set for estimating treatment -> outcome from observational data.
+
+    Returns a minimal set of observed variables, an empty list when no
+    adjustment is needed, or null when the graph has no valid set.
+    """
+    network = _network(network_id)
+    if network.causal is None:
+        raise ValueError("this network has no causal graph")
+    found = network.causal.adjustment_set(treatment, outcome)
+    return {"network_id": network_id, "treatment": treatment, "outcome": outcome,
+            "adjustment_set": None if found is None else sorted(found)}
+
+
 TOOLS = [
     create_network,
     list_networks,
@@ -261,6 +391,10 @@ TOOLS = [
     compare_paths,
     export_flow_graph,
     import_flow_graph,
+    add_causal_variable,
+    simulate_intervention,
+    compare_interventions,
+    causal_adjustment_set,
 ]
 
 

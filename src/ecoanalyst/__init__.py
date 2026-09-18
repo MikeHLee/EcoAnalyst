@@ -9,6 +9,9 @@ Main entry points:
   losses, finds minimum-loss routes, and reads and writes JSON.
 - :class:`EconomicAnalysis` prices losses, follows a quantity along a path,
   ranks hotspots, and computes total cost of ownership.
+- :class:`CausalModel` (``ecoanalyst.causal``) is a Bayesian causal graph
+  that runs beside the flow network and drives its parameters; ``simulate``
+  and ``compare`` estimate the effect of interventions on flow outcomes.
 
 The REST server (``ecoanalyst.api``), the MCP server
 (``ecoanalyst.mcp_server``), and the 1.x modules (``ecoanalyst.legacy``) are
@@ -17,8 +20,10 @@ imported separately because they need optional dependencies.
 
 from ._version import __version__
 from .analysis import EconomicAnalysis
+from .causal import Binding, CausalModel, CausalVariable, compare, simulate
 from .formats import FLOW_GRAPH_FORMAT, FLOW_GRAPH_VERSION, detect_format
 from .models import (
+    EFFICIENCY_MODES,
     CANONICAL_EDGE_KINDS,
     CANONICAL_NODE_KINDS,
     EDGE_KIND_ALIASES,
@@ -37,7 +42,7 @@ from .models import (
     normalize_edge_kind,
     normalize_node_kind,
 )
-from .network import EcosystemNetwork, compound_loss
+from .network import EcosystemNetwork, Transfer, compound_loss
 
 __all__ = [
     "__version__",
@@ -63,7 +68,15 @@ __all__ = [
     # Core classes and helpers
     "EcosystemNetwork",
     "EconomicAnalysis",
+    "Transfer",
     "compound_loss",
+    "EFFICIENCY_MODES",
+    # Causal layer
+    "CausalModel",
+    "CausalVariable",
+    "Binding",
+    "simulate",
+    "compare",
     # Formats
     "FLOW_GRAPH_FORMAT",
     "FLOW_GRAPH_VERSION",
