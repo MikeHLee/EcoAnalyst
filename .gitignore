@@ -172,3 +172,23 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Local virtual environment used for development
+.venv/
+
+# LaTeX build output for the whitepaper
+whitepaper/*.aux
+whitepaper/*.log
+whitepaper/*.out
+whitepaper/*.toc
+whitepaper/*.bbl
+whitepaper/*.blg
+whitepaper/*.fls
+whitepaper/*.fdb_latexmk
+whitepaper/*.synctex.gz
+
+# Files written by the example scripts
+examples/output/
+
+# macOS
+.DS_Store
