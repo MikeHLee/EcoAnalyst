@@ -1,284 +1,206 @@
 # EcoAnalyst
 
-A comprehensive library for understanding **ecosystems**, **economies**, and **abstract physically interacting networks** through graph-based modeling, causal inference, and economic analysis.
+EcoAnalyst models a supply chain, energy system, or other flow network as a directed graph of producers, processors, handlers, and consumers. Each node and edge can carry a capacity, a loss rate, and costs. The library computes how much is lost along a route, finds the route that delivers the most, prices the losses, and exchanges networks as JSON through a Python API, a command line tool, a local REST server, and an MCP server.
 
-## What is EcoAnalyst?
+## Install
 
-EcoAnalyst provides tools for modeling and analyzing complex networks where **mass**, **energy**, and **information** flow between interconnected entities. The library applies graph theory, causal inference, and economic analysis to understand physical, economic, and ecological systems.
-
-### Applications
-
-- **Supply Chains**: Track material flows, identify loss points, optimize logistics
-- **Energy Systems**: Model power grids, analyze transmission losses, optimize distribution
-- **Ecological Networks**: Study nutrient flows, energy transfer, population dynamics
-- **Economic Systems**: Analyze resource allocation, financial flows, market inefficiencies
-- **Information Networks**: Model data flows, identify bottlenecks, optimize routing
-
-### Core Capabilities
-
-1. **Model the Network**: Create typed, validated graph representations with nodes (producers, processors, handlers, consumers) and edges (inventory, service, currency, energy, information flows)
-2. **Quantify Flows**: Track mass, energy, and information transfer with loss/efficiency metrics
-3. **Find Inefficiencies**: Identify loss hotspots and bottlenecks using graph algorithms
-4. **Understand Causes**: Use Bayesian inference to discover what factors drive losses
-5. **Optimize Paths**: Find minimum-loss routes through the network
-6. **Calculate Economics**: Assess total cost of ownership and economic impact
-
-## Key Features (v2.0)
-
-- **Typed Node/Edge System**: Pydantic-validated schemas for robust data modeling
-- **Multi-Domain Support**: Model supply chains, energy grids, ecological systems, or economic networks
-- **Flow Analysis**: Track mass, energy, currency, and information flows with loss/efficiency metrics
-- **RESTful API**: FastAPI endpoints for CRUD operations and analysis
-- **MCP Integration**: AI assistant access via Model Context Protocol
-- **Economic Analysis**: TCO, loss cost calculation, and scenario comparison
-- **Path Optimization**: Find minimum-loss paths through networks
-- **Causal Analysis**: Bayesian inference for understanding loss drivers and system dynamics
-
-## Installation
+EcoAnalyst needs Python 3.10 or later.
 
 ```bash
-# Clone the repository
 git clone https://github.com/MikeHLee/ecoanalyst.git
 cd ecoanalyst
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
 
-## Quick Start
+The core install depends on networkx, numpy, and pydantic. Optional parts are extras:
 
-### Python API
+| Extra | Adds | Needed for |
+|-------|------|------------|
+| `api` | fastapi, uvicorn, httpx | the REST server |
+| `mcp` | mcp | the MCP server (`ecoanalyst-mcp`) |
+| `viz` | matplotlib | drawing in the legacy modules and examples |
+| `bayes` | pymc, arviz, pandas, scipy, matplotlib | the legacy regression module |
+| `dev` | pytest, httpx, fastapi, jsonschema | running the tests |
+| `all` | everything except `dev` | |
 
-#### Example 1: Supply Chain (Mass Flow)
+For example: `pip install -e ".[api,mcp]"`.
+
+## Quick start
+
+<!-- tests/test_readme.py runs the next code block and checks the commented output. -->
+```python
+from ecoanalyst import EconomicAnalysis, EcosystemNetwork, NodeType, RelationshipType
+
+net = EcosystemNetwork(name="Produce chain", network_type="supply_chain")
+
+farm = net.add_node(NodeType.PRODUCER, "Farm", "Valley Farm",
+                    properties={"capacity": {"value": 1000, "unit": "kg/day"}, "waste_rate": 0.05})
+store = net.add_node(NodeType.HANDLER, "ColdStorage", "Cold Store",
+                     properties={"capacity": {"value": 5000, "unit": "kg"}, "waste_rate": 0.02})
+shop = net.add_node(NodeType.CONSUMER, "Retailer", "Corner Grocer",
+                    properties={"capacity": {"value": 800, "unit": "kg/day"}, "waste_rate": 0.08})
+
+kg_day = "kg/day"
+net.add_edge(farm, store, RelationshipType.INVENTORY,
+             {"max_rate": {"value": 900, "unit": kg_day}, "waste_rate": 0.01})
+net.add_edge(store, shop, RelationshipType.INVENTORY,
+             {"max_rate": {"value": 800, "unit": kg_day}, "waste_rate": 0.01})
+net.add_edge(farm, shop, RelationshipType.INVENTORY,
+             {"max_rate": {"value": 300, "unit": kg_day}, "waste_rate": 0.15})
+net.add_edge(shop, farm, RelationshipType.CURRENCY,
+             {"max_rate": {"value": 2000, "unit": "USD/day"}})
+
+path, loss, _ = net.find_minimum_waste_path(farm, shop, edge_kinds=["inventory"])
+print(" -> ".join(net.nodes[n].name for n in path), f"loses {loss:.2%}")
+# Valley Farm -> Cold Store -> Corner Grocer loses 16.05%
+
+cost = EconomicAnalysis(net).calculate_path_cost(
+    path, pricing_data={"Farm": 2.0, "ColdStorage": 2.5, "Retailer": 4.0}
+)
+print(f"{cost['delivered_quantity']:.1f} of {cost['input_quantity']:.0f} kg delivered, "
+      f"losses cost ${cost['total_cost']:.2f}")
+# 839.5 of 1000 kg delivered, losses cost $481.06
+```
+
+The route search is limited to inventory edges, so the payment edge from shop to farm is not treated as a route for goods. The direct farm-to-shop edge loses 15% in transit, so that route loses 1 - 0.95 × 0.85 × 0.92 = 25.71% and the search passes it over.
+
+`ecoanalyst demo` builds and analyzes the same network from the command line.
+
+## Node kinds
+
+A node kind says what role a node plays. Kinds are lowercase identifiers. The library defines the kinds below, and any other value that matches `^[a-z][a-z0-9_]*$` (for example `cold_store` or `substation`) is accepted as a custom kind. `NodeType` holds the built-in kinds as constants.
+
+| Kind | Set | Role | Examples |
+|------|-----|------|----------|
+| `producer` | canonical | material or energy enters the network | farm, mine, power plant |
+| `processor` | canonical | transforms what passes through | packing plant, refinery, inverter |
+| `handler` | canonical | stores or moves without transforming | warehouse, substation, battery |
+| `consumer` | canonical | material or energy leaves the network | retailer, household load |
+| `service` | extended | supports other nodes | cold chain operator, maintenance crew |
+| `grid` | extended | external supply or sink | utility connection, open market |
+
+## Flow kinds
+
+A flow kind says what an edge carries. Kinds are stored in their short form. The 2.x names are accepted as aliases wherever a kind is read, including old JSON files. Custom kinds follow the same pattern as node kinds.
+
+| Kind | Set | Carries | 2.x alias | Constant |
+|------|-----|---------|-----------|----------|
+| `inventory` | canonical | goods and materials | `inventory_flow` | `RelationshipType.INVENTORY` |
+| `energy` | canonical | electricity, heat, fuel | `energy_flow` | `RelationshipType.ENERGY` |
+| `currency` | canonical | payments | `currency_flow` | `RelationshipType.CURRENCY` |
+| `information` | canonical | data and signals | `information_flow` | `RelationshipType.INFORMATION` |
+| `service` | extended | service provision | `service_flow` | `RelationshipType.SERVICE` |
+| `waste` | extended | waste and byproducts | `waste_flow` | `RelationshipType.WASTE` |
+| `control` | extended | management and control signals | `control_signal` | `RelationshipType.CONTROL` |
+
+The old member names still work: `RelationshipType.INVENTORY_FLOW` is the same member as `RelationshipType.INVENTORY`, and its value is `"inventory"`. `normalize_node_kind()` and `normalize_edge_kind()` apply these rules to any value.
+
+Nodes and edges also take a few optional fields that the analysis does not use but that are stored and exported: `geometry` (a GeoJSON-like object) and `series_ref` (a string that points at a time series kept elsewhere) on nodes, and `polarity` (`"positive"` or `"negative"`) and `series_ref` on edges.
+
+## How losses compound
+
+A loss rate is the fraction of what reaches a component that the component loses. When material passes several components in a row, each one loses a share of what is left, so the losses multiply rather than add:
+
+```
+total loss = 1 - (1 - w1)(1 - w2)...(1 - wn)
+```
+
+Two steps that lose 10% and 20% lose 1 - 0.9 × 0.8 = 28% together, not 30%. The total never exceeds 100%.
+
+`find_minimum_waste_path` weights each edge by -log(1 - w_edge) - log(1 - w_source_node). A shortest path under these weights is the path that keeps the largest fraction. An edge with a loss rate of 1 carries nothing and is skipped. When two nodes are joined by several edges, the path uses the one with the lowest loss rate; pass `edge_kinds` to limit which kinds are eligible.
+
+There are two cost estimates in `EconomicAnalysis`:
+
+| Method | What it computes |
+|--------|------------------|
+| `calculate_path_cost(path, input_quantity=...)` | Starts with a quantity (default: first node capacity × count) and removes each component's share in order along the path. Node losses are priced by node class, edge losses by the source node's class. |
+| `calculate_waste_cost()` | Takes each node at capacity × count and each edge at its max rate, and multiplies by its own loss rate. It ranks components quickly but does not follow material between them, so it is not a mass balance. |
+
+`identify_hotspots()` ranks components by loss rate or by the capacity-based loss quantity. `calculate_total_cost_of_ownership()` adds capex, installation, and discounted annual opex, and subtracts the discounted salvage value.
+
+## Flow-graph export
+
+`to_flow_graph()` writes a network in a portable JSON format with `actors` and `flows`, and `from_flow_graph()` reads it back without loss:
 
 ```python
-from src.ecoanalyst import (
-    EcosystemNetwork, 
-    EconomicAnalysis,
-    NodeType, 
-    RelationshipType
-)
+import json
 
-# Create a supply chain network
-network = EcosystemNetwork(
-    name="Regional Food Distribution",
-    description="Farm to retail with cold chain",
-    network_type="supply_chain"
-)
+with open("chain.flowgraph.json", "w") as f:
+    json.dump(net.to_flow_graph(), f, indent=2)
 
-# Add producer (mass input)
-farm_id = network.add_node(
-    node_type=NodeType.PRODUCER,
-    node_class="Farm",
-    name="Organic Farm",
-    properties={
-        "capacity": {"value": 5000, "unit": "kg/day"},
-        "efficiency": 0.95,
-        "waste_rate": 0.05,  # 5% mass loss
-    }
-)
-
-# Add handler (mass storage)
-storage_id = network.add_node(
-    node_type=NodeType.HANDLER,
-    node_class="ColdStorage",
-    name="Cold Storage Facility",
-    properties={
-        "capacity": {"value": 20000, "unit": "kg"},
-        "waste_rate": 0.02,  # 2% spoilage
-    },
-    operations={
-        "temperature_range": {"min": 2, "max": 8, "unit": "C"}
-    }
-)
-
-# Connect with inventory flow (mass transfer)
-network.add_edge(
-    source_node_id=farm_id,
-    target_node_id=storage_id,
-    relationship_type=RelationshipType.INVENTORY_FLOW,
-    flow={
-        "max_rate": {"value": 4500, "unit": "kg/day"},
-        "efficiency": 0.97,
-        "waste_rate": 0.03,  # 3% transport loss
-    }
-)
-
-# Analyze losses
-analysis = EconomicAnalysis(network)
-result = analysis.calculate_waste_cost(
-    pricing_data={"Farm": 2.00, "ColdStorage": 2.50}
-)
-print(f"Total mass loss cost: ${result['total_waste_cost']:,.2f}")
+with open("chain.flowgraph.json") as f:
+    again = EcosystemNetwork.from_flow_graph(json.load(f))
 ```
 
-#### Example 2: Energy Grid (Energy Flow)
+The format is described in [docs/flow_graph_format.md](docs/flow_graph_format.md), with a JSON Schema in [docs/flowgraph.schema.json](docs/flowgraph.schema.json). `EcosystemNetwork.load_from_json()` detects the format of a file: the native format written by `save_to_json()` (including 2.x files), a flow graph, or a 1.x `WasteNetwork` file.
 
-```python
-# Create an energy network
-grid = EcosystemNetwork(
-    name="Regional Power Grid",
-    description="Generation to distribution",
-    network_type="energy"
-)
-
-# Power plant (energy producer)
-plant_id = grid.add_node(
-    node_type=NodeType.PRODUCER,
-    node_class="SolarFarm",
-    name="Desert Solar Array",
-    properties={
-        "capacity": {"value": 100, "unit": "MW"},
-        "efficiency": 0.22,  # 22% solar conversion
-        "waste_rate": 0.02,  # 2% inverter loss
-    }
-)
-
-# Substation (energy handler)
-substation_id = grid.add_node(
-    node_type=NodeType.HANDLER,
-    node_class="Substation",
-    name="Regional Substation",
-    properties={
-        "capacity": {"value": 150, "unit": "MW"},
-        "efficiency": 0.98,
-        "waste_rate": 0.01,  # 1% transformer loss
-    }
-)
-
-# Transmission line (energy flow)
-grid.add_edge(
-    source_node_id=plant_id,
-    target_node_id=substation_id,
-    relationship_type=RelationshipType.ENERGY_FLOW,
-    flow={
-        "max_rate": {"value": 95, "unit": "MW"},
-        "efficiency": 0.94,  # 6% transmission loss
-        "waste_rate": 0.06,
-    }
-)
-```
-
-### CLI Testing
+## Command line
 
 ```bash
-# Run feature tests
-python admin_cli.py test_features
-
-# Run interactive demo
-python admin_cli.py demo
+ecoanalyst demo                                   # build and analyze a small network
+ecoanalyst summary data/network_data.json         # node and edge counts by kind
+ecoanalyst hotspots examples/demo_network.json --top 3
+ecoanalyst convert data/network_data.json out.json --to flowgraph
 ```
 
-### REST API
+`convert` reads any supported format and writes the native format (`--to v3`, the default) or a flow graph. Use `-` as the output path to write to stdout.
+
+## REST API
 
 ```bash
-# Start the API server
-uvicorn src.ecoanalyst.api:app --reload
-
-# Create a network
-curl -X POST http://localhost:8000/networks \
-  -H "Content-Type: application/json" \
-  -H "X-User-Id: user1" \
-  -d '{"name": "My Network", "network_type": "supply_chain"}'
+pip install -e ".[api]"
+uvicorn ecoanalyst.api:app --reload
 ```
 
-### MCP Server (AI Assistant Integration)
+The REST server is a local development server. It has no authentication, keeps networks in memory, and loses them when it stops. Do not expose it to a network you do not control. Earlier versions asked for an `X-User-Id` header; it was never authentication, and the server now ignores it.
 
-Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Browsers on other origins are refused by default. To allow a front end on another origin, list it in `ECOANALYST_CORS_ORIGINS`, separated by commas:
+
+```bash
+ECOANALYST_CORS_ORIGINS=http://localhost:5173 uvicorn ecoanalyst.api:app
+```
+
+The interactive API reference is at `http://localhost:8000/docs` while the server runs. [docs/integration.md](docs/integration.md) has curl examples for each endpoint.
+
+## MCP server
+
+The MCP server exposes the library to MCP clients such as Claude Desktop over stdio. Install the `mcp` extra, then add the server to the client configuration (for Claude Desktop, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
   "mcpServers": {
     "ecoanalyst": {
-      "command": "python3",
-      "args": ["/path/to/ecoanalyst/mcp_server.py"],
-      "transport": "stdio"
+      "command": "ecoanalyst-mcp"
     }
   }
 }
 ```
 
-## Node Types
+If the client does not see your virtual environment's `PATH`, give the full path, for example `/path/to/ecoanalyst/.venv/bin/ecoanalyst-mcp`. Configurations that run `python mcp_server.py` from a clone keep working, as long as that Python has networkx, numpy, pydantic, and mcp installed.
 
-Nodes represent entities that produce, process, handle, or consume flows of mass, energy, or information.
+The tools are `create_network`, `list_networks`, `get_network`, `delete_network`, `add_node`, `add_edge`, `calculate_waste`, `find_minimum_waste_path`, `identify_hotspots`, `compare_paths`, `export_flow_graph`, and `import_flow_graph`. Networks live in the server process and are lost when it exits; use `export_flow_graph` to keep one.
 
-| Type | Description | Supply Chain | Energy System | Ecological | Economic |
-|------|-------------|--------------|---------------|------------|----------|
-| `producer` | Where flows enter | Farms, mines | Power plants, solar | Primary producers | Capital sources |
-| `processor` | Transforms flows | Factories, mills | Refineries, converters | Decomposers | Processors |
-| `handler` | Stores/moves flows | Warehouses, ports | Batteries, substations | Reservoirs | Banks, exchanges |
-| `consumer` | Where flows exit | Retail, end users | Loads, consumers | Apex predators | End consumers |
-| `service` | Supporting services | Cold chain, QA | Maintenance, control | Symbiotic species | Service providers |
-| `grid` | External supply/sink | Imports/exports | Grid connection | Environment | External markets |
+## Legacy modules
 
-## Relationship Types
+The 1.x modules live in `ecoanalyst.legacy` for existing scripts:
 
-Edges represent flows of mass, energy, currency, or information between nodes.
+| Module | Contents |
+|--------|----------|
+| `ecoanalyst.legacy.network_model` | `WasteNetwork`, a directed graph with a loss rate on each node and edge |
+| `ecoanalyst.legacy.advanced_network` | `AdvancedWasteNetwork`, typed node and edge classes, and pluggable loss functions |
+| `ecoanalyst.legacy.causal_analysis` | `WasteCausalNetwork`, Bayesian linear regression of loss on its drivers (needs `bayes`) |
+| `ecoanalyst.legacy.network_viz` | matplotlib helpers for `AdvancedWasteNetwork` (needs `viz`) |
 
-| Type | Flow Category | Description | Examples |
-|------|---------------|-------------|----------|
-| `inventory_flow` | Mass | Physical goods/materials | Food, raw materials, products |
-| `energy_flow` | Energy | Power/energy transfer | Electricity, heat, fuel |
-| `information_flow` | Information | Data/signals | Sensor data, control signals |
-| `currency_flow` | Economic | Financial transactions | Payments, investments |
-| `service_flow` | Service | Service provision | Maintenance, logistics |
-| `waste_flow` | Mass/Energy | Waste/byproduct movement | Emissions, waste disposal |
+`WasteCausalNetwork` fits linear models with PyMC. Its results describe associations in the data you give it. The names `get_causal_effect` and `discover_causal_structure` are kept for compatibility: the first multiplies weights that you attach to graph edges, and the second joins columns whose pairwise correlation passes a significance threshold. Neither estimates cause and effect.
 
-## Project Structure
+The scripts in `examples/` show both the current API (`ecoanalyst_demo.py`) and the legacy modules. They write their output to `examples/output/`.
 
-```
-ecoanalyst/
-├── src/
-│   ├── ecoanalyst/           # New typed API (v2.0)
-│   │   ├── __init__.py
-│   │   ├── models.py         # Pydantic schemas
-│   │   ├── network.py        # EcosystemNetwork class
-│   │   ├── analysis.py       # EconomicAnalysis class
-│   │   └── api.py            # FastAPI endpoints
-│   ├── network_model.py      # Legacy network model
-│   ├── advanced_network.py   # Advanced features
-│   ├── causal_analysis.py    # Bayesian inference
-│   └── network_viz.py        # Visualization
-├── examples/                  # Example scripts
-├── whitepaper/               # Academic documentation
-├── mcp_server.py             # MCP server for AI assistants
-├── admin_cli.py              # CLI admin tool
-└── requirements.txt
-```
+## Whitepaper
 
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/networks` | Create network |
-| GET | `/networks` | List networks |
-| GET | `/networks/{id}` | Get network |
-| DELETE | `/networks/{id}` | Delete network |
-| POST | `/networks/{id}/nodes` | Add node |
-| DELETE | `/networks/{id}/nodes/{node_id}` | Delete node |
-| POST | `/networks/{id}/edges` | Add edge |
-| POST | `/networks/{id}/calculate-waste` | Calculate waste |
-| GET | `/networks/{id}/optimize-paths` | Find optimal path |
-| GET | `/networks/{id}/hotspots` | Identify hotspots |
-
-## Documentation
-
-- **Whitepaper**: See `whitepaper/` for mathematical formulation
-- **API Docs**: Run server and visit `http://localhost:8000/docs`
-- **Examples**: See `examples/` directory
-
-## Migration from v1.x
-
-The legacy `WasteNetwork` class is still available in `src/network_model.py`. For new projects, use the typed `EcosystemNetwork` class from `src/ecoanalyst/`.
-
-## Contributing
-
-Contributions welcome! Please read our contributing guidelines.
+`whitepaper/main.pdf` (source in `whitepaper/main.tex`) sets out the graph model, loss functions, and regression approach behind the 1.x modules. Its path cost sums per-edge losses; the library now compounds them as described above.
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT. See [LICENSE](LICENSE).
