@@ -104,15 +104,22 @@ def inverse_link(kind: str, z: Any) -> Any:
     return float(out) if np.ndim(out) == 0 else out
 
 
-def _check_value(kind: str, value: float, name: str) -> float:
-    value = float(value)
-    if kind == "rate" and not 0.0 <= value <= 1.0:
-        raise ValueError(f"do({name}): a rate must be between 0 and 1, got {value}")
-    if kind == "positive" and value <= 0.0:
-        raise ValueError(f"do({name}): a positive variable must be > 0, got {value}")
-    if kind == "binary" and value not in (0.0, 1.0):
-        raise ValueError(f"do({name}): a binary variable must be 0 or 1, got {value}")
-    return value
+def _check_value(kind: str, value: Any, name: str, n: int) -> np.ndarray:
+    """Validate an intervention value (a scalar or one value per sample) and broadcast it to n."""
+    arr = np.asarray(value, dtype=float)
+    if arr.ndim == 0:
+        arr = np.full(n, float(arr))
+    elif arr.shape != (n,):
+        raise ValueError(f"do({name}): expected a scalar or {n} values, got shape {arr.shape}")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"do({name}): values must be finite")
+    if kind == "rate" and np.any((arr < 0.0) | (arr > 1.0)):
+        raise ValueError(f"do({name}): a rate must be between 0 and 1")
+    if kind == "positive" and np.any(arr <= 0.0):
+        raise ValueError(f"do({name}): a positive variable must be > 0")
+    if kind == "binary" and not np.all(np.isin(arr, (0.0, 1.0))):
+        raise ValueError(f"do({name}): a binary variable must be 0 or 1")
+    return arr
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +220,20 @@ class CausalVariable(BaseModel):
             return np.asarray(self.posterior.mean, dtype=float), (self.noise_sd if noise is None else noise)
         beta = [self.intercept] + [self.coefficients.get(p, 0.0) for p in self.parents]
         return np.asarray(beta, dtype=float), self.noise_sd
+
+
+class ParameterDraw:
+    """One set of equation coefficients per sample, drawn once and reused.
+
+    Pass it to ``CausalModel.sample(parameters=...)`` to keep each sample's
+    coefficients fixed across repeated calls, for example when a model is
+    stepped through time one period per call.
+    """
+
+    def __init__(self, n: int, coefficients: Dict[str, np.ndarray], noise_sd: Dict[str, Any]):
+        self.n = n
+        self.coefficients = coefficients
+        self.noise_sd = noise_sd
 
 
 class CausalModel:
@@ -354,12 +375,37 @@ class CausalModel:
 
     # -- sampling ----------------------------------------------------------
 
+    def draw_parameters(
+        self, n: int, seed: Optional[int] = None, parameter_uncertainty: bool = True,
+    ) -> ParameterDraw:
+        """Draw each sample's coefficients and noise sd once (see ``ParameterDraw``)."""
+        rng = np.random.default_rng(seed)
+        coefficients: Dict[str, np.ndarray] = {}
+        noise: Dict[str, Any] = {}
+        for v in self.variables.values():
+            z_coef, u_scale = self._parameter_noise(rng, v, n)
+            beta, sigma = _coefficients(v, n, z_coef, u_scale, parameter_uncertainty)
+            coefficients[v.name] = np.array(beta)
+            noise[v.name] = sigma
+        return ParameterDraw(n, coefficients, noise)
+
+    @staticmethod
+    def _parameter_noise(rng, v: CausalVariable, n: int):
+        z_coef = rng.standard_normal((n, len(v.parents) + 1))
+        post = v.posterior
+        u_scale = (
+            rng.gamma(post.a, 1.0, size=n)
+            if post is not None and post.family == "normal_inverse_gamma" else None
+        )
+        return z_coef, u_scale
+
     def sample(
         self,
         n: int = 1000,
-        do: Optional[Mapping[str, float]] = None,
+        do: Optional[Mapping[str, Any]] = None,
         seed: Optional[int] = None,
         parameter_uncertainty: bool = True,
+        parameters: Optional[ParameterDraw] = None,
     ) -> Dict[str, np.ndarray]:
         """Draw ``n`` joint samples, optionally under interventions.
 
@@ -370,40 +416,72 @@ class CausalModel:
 
         Args:
             n: Number of samples
-            do: Variable name -> fixed value
+            do: Variable name -> fixed value, either one value for every
+                sample or an array with one value per sample
             seed: Seed for numpy's default generator
             parameter_uncertainty: For fitted variables, draw coefficients
                 from the posterior per sample (True) or use the posterior
-                mean (False)
+                mean (False). Ignored when ``parameters`` is given.
+            parameters: Coefficients from ``draw_parameters(n)`` to use
+                instead of drawing new ones; only the noise is drawn
 
         Returns:
             Variable name -> array of ``n`` values
         """
-        do = dict(do or {})
-        for name, value in do.items():
-            do[name] = _check_value(self._require(name).kind, value, name)
+        do = {
+            name: _check_value(self._require(name).kind, value, name, n)
+            for name, value in (do or {}).items()
+        }
+        if parameters is not None and parameters.n != n:
+            raise ValueError(f"parameters were drawn for n={parameters.n}, not n={n}")
         rng = np.random.default_rng(seed)
         out: Dict[str, np.ndarray] = {}
         for v in self.variables.values():
-            k = len(v.parents) + 1
-            z_coef = rng.standard_normal((n, k))
+            if parameters is None:
+                z_coef, u_scale = self._parameter_noise(rng, v, n)
             u_noise = rng.standard_normal(n)
             u_bern = rng.random(n)
-            post = v.posterior
-            u_scale = (
-                rng.gamma(post.a, 1.0, size=n)
-                if post is not None and post.family == "normal_inverse_gamma" else None
-            )
             if v.name in do:
-                out[v.name] = np.full(n, do[v.name])
+                out[v.name] = do[v.name]
                 continue
             design = np.column_stack([np.ones(n)] + [out[p] for p in v.parents])
-            beta, sigma = _coefficients(v, n, z_coef, u_scale, parameter_uncertainty)
+            if parameters is None:
+                beta, sigma = _coefficients(v, n, z_coef, u_scale, parameter_uncertainty)
+            else:
+                beta, sigma = parameters.coefficients[v.name], parameters.noise_sd[v.name]
             eta = np.einsum("ij,ij->i", design, beta)
             if v.kind == "binary":
                 out[v.name] = (u_bern < _sigmoid(eta)).astype(float)
             else:
                 out[v.name] = inverse_link(v.kind, eta + sigma * u_noise)
+        return out
+
+    def predict(self, data: Any, variables: Optional[Iterable[str]] = None) -> Dict[str, np.ndarray]:
+        """Each variable's value implied by its equation and the parent values in ``data``.
+
+        Uses the posterior mean when fitted, else the stated values, and no
+        noise: the result is the inverse link of the linear predictor, which
+        is the median for continuous, rate, and positive variables and the
+        probability of 1 for binary ones. A variable is predicted when all
+        its parents are columns; rows with a missing parent give NaN.
+        ``variables`` limits the output to the named variables.
+
+        Returns:
+            Variable name -> array with one value per row
+        """
+        columns = {str(k): np.asarray(data[k], dtype=float) for k in _keys(data)}
+        if not columns:
+            raise ValueError("predict needs at least one column to know the number of rows")
+        n_rows = len(next(iter(columns.values())))
+        names = list(variables) if variables is not None else list(self.variables)
+        out: Dict[str, np.ndarray] = {}
+        for name in names:
+            v = self._require(name)
+            if not all(p in columns for p in v.parents):
+                continue
+            design = np.column_stack([np.ones(n_rows)] + [columns[p] for p in v.parents])
+            beta, _ = v.point_estimate()
+            out[name] = np.asarray(inverse_link(v.kind, design @ beta), dtype=float)
         return out
 
     # -- fitting -----------------------------------------------------------

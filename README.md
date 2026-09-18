@@ -192,6 +192,8 @@ A binding is written `"node:<id>:<field>"` or `"edge:<id>:<field>"`. Nodes accep
 | `simulate(net, outcomes, n, do, seed)` | Samples the graph, sets the bound parameters for each sample, and evaluates each outcome. Outcomes are `path_waste`, `path_delivered`, `best_route_delivered` (re-routes per sample), `waste_cost`, `path_cost`, your own function of the network, or the name of a causal variable. |
 | `compare(net, outcome, do_a, do_b, n, seed)` | Mean outcome under two interventions and the difference. Both runs share their random draws, so the difference comes from the interventions alone. |
 | `model.fit(data)` | Updates each equation from columns of data (a dict or a pandas DataFrame). Continuous, rate, and positive variables get an exact normal-inverse-gamma posterior with the stated values as the prior mean; binary variables get a Laplace approximation. Later samples carry the parameter uncertainty. |
+| `model.predict(data)` | Each variable's median (a probability for binary variables) from its equation and the parent values in `data`, for checking fit on held-out rows. |
+| `model.draw_parameters(n)` | One coefficient draw per sample, which `model.sample(n, parameters=...)` reuses, so a model can be stepped through time with each trajectory keeping its own coefficients. `do` also accepts one value per sample. |
 | `model.adjustment_set(x, y)` | A minimal set of observed variables that satisfies the back-door criterion for estimating the effect of x on y from observational data, or None. Mark a variable `observed=False` if you cannot measure it. |
 | `model.to_gml()` | The graph as GML, which DoWhy's `CausalModel(graph=...)` accepts, if you want other estimators. |
 

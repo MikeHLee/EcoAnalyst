@@ -270,3 +270,49 @@ def test_flow_graph_with_causal_section_matches_schema():
     net.causal.fit({"ambient": np.random.default_rng(0).normal(20, 2, 50)})
     schema = json.loads(SCHEMA.read_text())
     jsonschema.validate(json.loads(json.dumps(net.to_flow_graph())), schema)
+
+
+# -- per-sample interventions, fixed parameter draws, prediction ------------------
+
+def test_do_accepts_one_value_per_sample():
+    m = chain()
+    temps = np.linspace(10, 30, 400)
+    s = m.sample(400, do={"temp": temps}, seed=0)
+    assert np.array_equal(s["temp"], temps)
+    # hotter rows spoil more on average
+    assert s["spoil"][temps > 25].mean() > s["spoil"][temps < 15].mean()
+    with pytest.raises(ValueError, match="expected a scalar or 400 values"):
+        m.sample(400, do={"temp": temps[:10]})
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        m.sample(3, do={"spoil": [0.1, 0.2, 1.5]})
+
+
+def test_parameter_draw_is_reused_across_calls():
+    m = fit_model()
+    m.fit(synthetic(40, seed=4))
+    draw = m.draw_parameters(300, seed=9)
+    a = m.sample(300, seed=1, parameters=draw)
+    b = m.sample(300, seed=2, parameters=draw)
+    # Same coefficients per row, different noise: the conditional medians match.
+    temps = np.full(300, 25.0)
+    pa = m.sample(300, seed=1, parameters=draw, do={"temp": temps})
+    pb = m.sample(300, seed=1, parameters=draw, do={"temp": temps})
+    assert np.array_equal(pa["spoil"], pb["spoil"])
+    assert not np.array_equal(a["spoil"], b["spoil"])
+    beta = draw.coefficients["spoil"]
+    assert beta.shape == (300, 2) and beta[:, 1].std() > 0  # uncertainty kept per row
+    with pytest.raises(ValueError, match="drawn for n=300"):
+        m.sample(10, parameters=draw)
+
+
+def test_predict_matches_the_equation():
+    m = chain()
+    temp = np.array([15.0, 20.0, np.nan])
+    pred = m.predict({"temp": temp})
+    expected = inverse_link("rate", link("rate", 0.05) + 0.1 * (temp - 20.0))
+    assert np.allclose(pred["spoil"][:2], expected[:2])
+    assert np.isnan(pred["spoil"][2])
+    assert "stockout" not in pred  # its parent (demand) is not a column
+    assert pred["temp"] == pytest.approx(np.full(3, 20.0))
+    only = m.predict({"temp": temp}, variables=["spoil"])
+    assert set(only) == {"spoil"}
