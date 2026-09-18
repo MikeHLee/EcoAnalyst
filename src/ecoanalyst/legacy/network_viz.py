@@ -1,11 +1,14 @@
 """
-network_viz.py: Advanced network visualization with annotations and property highlighting.
+network_viz.py: matplotlib drawing helpers for AdvancedWasteNetwork (EcoAnalyst 1.x).
+
+matplotlib is imported inside the functions, so importing this module does
+not need it. Install the ``viz`` extra to draw.
 """
+
+from __future__ import annotations
 
 from typing import Dict, List, Tuple, Any, Optional
 import networkx as nx
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle, Circle, FancyArrowPatch
 from .advanced_network import (
     NodeType, EdgeType, AdvancedNode, AdvancedEdge,
     InventoryEdge, ServiceEdge, CurrencyEdge, RegressionResult
@@ -158,6 +161,9 @@ def visualize_network(
     regression_results: Optional[Dict[str, RegressionResult]] = None
 ) -> plt.Figure:
     """Create an annotated visualization of the network."""
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle, Circle, FancyArrowPatch
+
     fig, ax = plt.subplots(figsize=(12, 8))
     
     # Create layout

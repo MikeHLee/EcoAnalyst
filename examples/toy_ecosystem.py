@@ -1,17 +1,15 @@
 """
-toy_ecosystem.py: Example implementation of waste network analysis
-for a toy ecosystem with growers, distributors, and a store.
+toy_ecosystem.py: a 1.x WasteNetwork of growers, distributors, and a store.
+
+The first half finds minimum-loss paths in data/network_data.json. The second
+half simulates storage conditions and fits a Bayesian linear regression of
+waste on them, which needs the bayes extra.
 """
 
-import sys
-import os
 from pathlib import Path
 
-# Add the src directory to Python path
-sys.path.append(str(Path(__file__).parent.parent / 'src'))
-
-from network_model import WasteNetwork
-from causal_analysis import WasteCausalNetwork
+from ecoanalyst.legacy.network_model import WasteNetwork
+from ecoanalyst.legacy.causal_analysis import WasteCausalNetwork
 import matplotlib.pyplot as plt
 import networkx as nx
 import pandas as pd
@@ -79,7 +77,7 @@ def analyze_all_paths(network: WasteNetwork):
     return pd.DataFrame(results)
 
 def create_causal_network():
-    """Create a Bayesian network for causal analysis of waste."""
+    """Build a variable graph and simulated data for a regression of waste on conditions."""
     causal_net = WasteCausalNetwork()
     
     # Add nodes representing different factors
@@ -103,34 +101,34 @@ def create_causal_network():
                         distribution='normal',
                         params={'sigma': 1.0})
     
-    # Add causal relationships
+    # Edge weights are the values used to simulate the data below.
     causal_net.add_edge('temperature', 'product_damage', effect_size=0.3)
     causal_net.add_edge('humidity', 'product_damage', effect_size=0.2)
     causal_net.add_edge('storage_time', 'product_damage', effect_size=0.4)
     causal_net.add_edge('product_damage', 'waste_amount', effect_size=0.8)
     
-    # Generate synthetic data for observed variables only
+    # Simulate observations
     n_samples = 1000
     np.random.seed(42)
     
-    # Generate exogenous variables
+    # Storage conditions
     data = pd.DataFrame({
         'temperature': np.random.normal(20, 5, n_samples),
         'humidity': np.random.normal(50, 10, n_samples),
         'storage_time': np.random.normal(24, 6, n_samples)
     })
     
-    # Generate product_damage without adding it to observed data
+    # Product damage is not observed
     product_damage = (0.3 * data['temperature'] +
                      0.2 * data['humidity'] +
                      0.4 * data['storage_time'] +
                      np.random.normal(0, 1, n_samples))
     
-    # Generate waste_amount without adding it to observed data
+    # Waste is observed and becomes the regression target
     waste_amount = (0.8 * product_damage +
                    np.random.normal(0, 1, n_samples))
     
-    # Only add exogenous variables to the model's data
+    data['waste'] = waste_amount
     causal_net.add_data(data)
     return causal_net
 
@@ -162,40 +160,27 @@ def main():
     # Visualize the network with highlighted minimum waste path
     plt = visualize_network(network, highlight_path=min_path,
                           title="Waste Network (Minimum Waste Path Highlighted)")
-    output_path = Path(__file__).parent.parent / 'data' / 'network_visualization.png'
+    output_dir = Path(__file__).parent / "output"
+    output_dir.mkdir(exist_ok=True)
+    output_path = output_dir / "network_visualization.png"
     plt.savefig(output_path)
     plt.close()
     
-    # Create and analyze causal network
-    print("\nCreating causal network for waste analysis...")
+    # Regression of waste on storage conditions
+    print("\nFitting a Bayesian linear regression of waste on storage conditions...")
     causal_net = create_causal_network()
-    
-    # Fit the causal model
-    print("Fitting Bayesian model...")
     causal_net.fit(samples=1000)
+
+    result = causal_net.regression_results['waste']
+    print("\nPosterior mean coefficients (simulated with 0.24, 0.16, 0.32):")
+    for name in ['temperature', 'humidity', 'storage_time', 'intercept']:
+        mean, std = result.coefficients[name]
+        print(f"{name:>12}: {mean:6.3f} (±{std:.3f})")
+    print(f"R² = {result.r2_score:.3f}")
     
-    # Calculate and display causal effects
-    print("\nEstimated causal effects on waste amount:")
-    causes = ['temperature', 'humidity', 'storage_time']
-    effects = []
-    
-    for cause in causes:
-        effect_size, std_err = causal_net.get_causal_effect(cause, 'waste_amount')
-        effects.append({
-            'cause': cause,
-            'effect_size': effect_size,
-            'std_err': std_err
-        })
-    
-    # Sort effects by absolute effect size
-    effects.sort(key=lambda x: abs(x['effect_size']), reverse=True)
-    
-    for effect in effects:
-        print(f"{effect['cause']:>12} -> waste_amount: {effect['effect_size']:6.3f} (±{effect['std_err']:.3f})")
-    
-    # Visualize the causal network
+    # Draw the variable graph with the simulation weights
     plt = causal_net.plot_causal_graph()
-    causal_output_path = Path(__file__).parent.parent / 'data' / 'causal_network.png'
+    causal_output_path = output_dir / "causal_network.png"
     plt.savefig(causal_output_path)
     plt.close()
     

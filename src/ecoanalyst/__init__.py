@@ -1,37 +1,61 @@
 """
-EcoAnalyst: A library for understanding ecosystems, economies, and abstract 
-physically interacting networks through graph-based modeling and analysis.
+EcoAnalyst: graph models of material, energy, money, and information flows
+between producers, processors, handlers, and consumers, with loss, routing,
+and cost analysis.
 
-This library provides tools for:
-- Modeling complex networks with typed nodes and edges
-- Analyzing flows of mass, energy, and information through networks
-- Calculating losses, inefficiencies, and bottlenecks
-- Causal analysis using Bayesian inference
-- Economic impact assessment and TCO analysis
-- Path optimization across supply chains, energy grids, and ecological systems
+Main entry points:
+
+- :class:`EcosystemNetwork` builds the graph, computes compounded path
+  losses, finds minimum-loss routes, and reads and writes JSON.
+- :class:`EconomicAnalysis` prices losses, follows a quantity along a path,
+  ranks hotspots, and computes total cost of ownership.
+- :class:`CausalModel` (``ecoanalyst.causal``) is a Bayesian causal graph
+  that runs beside the flow network and drives its parameters; ``simulate``
+  and ``compare`` estimate the effect of interventions on flow outcomes.
+
+The REST server (``ecoanalyst.api``), the MCP server
+(``ecoanalyst.mcp_server``), and the 1.x modules (``ecoanalyst.legacy``) are
+imported separately because they need optional dependencies.
 """
 
+from ._version import __version__
+from .analysis import EconomicAnalysis
+from .causal import Binding, CausalModel, CausalVariable, compare, simulate
+from .formats import FLOW_GRAPH_FORMAT, FLOW_GRAPH_VERSION, detect_format
 from .models import (
-    NodeType,
-    RelationshipType,
-    Quantity,
+    EFFICIENCY_MODES,
+    CANONICAL_EDGE_KINDS,
+    CANONICAL_NODE_KINDS,
+    EDGE_KIND_ALIASES,
+    EXTENDED_EDGE_KINDS,
+    EXTENDED_NODE_KINDS,
     Cost,
-    NodeProperties,
-    NodeFinancials,
-    NodeOperations,
+    EcosystemEdge,
     EcosystemNode,
     EdgeFlow,
-    EcosystemEdge,
+    NodeFinancials,
+    NodeOperations,
+    NodeProperties,
+    NodeType,
+    Quantity,
+    RelationshipType,
+    normalize_edge_kind,
+    normalize_node_kind,
 )
+from .network import EcosystemNetwork, Transfer, compound_loss
 
-from .network import EcosystemNetwork
-from .analysis import EconomicAnalysis
-
-__version__ = "2.0.0"
 __all__ = [
-    # Enums
+    "__version__",
+    # Kind vocabulary
     "NodeType",
     "RelationshipType",
+    "CANONICAL_NODE_KINDS",
+    "EXTENDED_NODE_KINDS",
+    "CANONICAL_EDGE_KINDS",
+    "EXTENDED_EDGE_KINDS",
+    "EDGE_KIND_ALIASES",
+    "normalize_node_kind",
+    "normalize_edge_kind",
     # Data models
     "Quantity",
     "Cost",
@@ -41,7 +65,20 @@ __all__ = [
     "EcosystemNode",
     "EdgeFlow",
     "EcosystemEdge",
-    # Core classes
+    # Core classes and helpers
     "EcosystemNetwork",
     "EconomicAnalysis",
+    "Transfer",
+    "compound_loss",
+    "EFFICIENCY_MODES",
+    # Causal layer
+    "CausalModel",
+    "CausalVariable",
+    "Binding",
+    "simulate",
+    "compare",
+    # Formats
+    "FLOW_GRAPH_FORMAT",
+    "FLOW_GRAPH_VERSION",
+    "detect_format",
 ]
