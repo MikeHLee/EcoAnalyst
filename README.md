@@ -154,7 +154,7 @@ pip install -e ".[api]"
 uvicorn ecoanalyst.api:app --reload
 ```
 
-The REST server is a local development server. It has no authentication, keeps networks in memory, and loses them when it stops. Do not expose it to a network you do not control. Earlier versions asked for an `X-User-Id` header; it was never authentication, and the server now ignores it.
+The REST server is a local development server. It has no authentication, keeps networks in memory, and loses them when it stops. Do not expose it to a network you do not control.
 
 Browsers on other origins are refused by default. To allow a front end on another origin, list it in `ECOANALYST_CORS_ORIGINS`, separated by commas:
 
