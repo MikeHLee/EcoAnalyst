@@ -185,7 +185,7 @@ Variables have one of four kinds. The equation is linear on the kind's link scal
 | `positive` | log | greater than 0 | exp(b0 + Σ b·parent + noise) |
 | `binary` | logit | 0 or 1 | Bernoulli(sigmoid(b0 + Σ b·parent)) |
 
-A binding is written `"node:<id>:<field>"` or `"edge:<id>:<field>"`. Nodes accept `waste_rate`, `efficiency`, `degradation_rate` (rate variables) and `capacity` (a positive variable); edges accept `waste_rate`, `efficiency` (rate) and `max_rate` (positive).
+A binding is written `"node:<id>:<field>"` or `"edge:<id>:<field>"`. Nodes accept `waste_rate`, `efficiency`, `degradation_rate` (rate variables; no current calculation reads `degradation_rate`) and `capacity` (a positive variable); edges accept `waste_rate`, `efficiency` (rate) and `max_rate` (positive).
 
 | Function | What it does |
 |----------|--------------|
