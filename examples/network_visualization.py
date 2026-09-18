@@ -1,6 +1,8 @@
-"""Example demonstrating enhanced network visualization capabilities."""
+"""Example: drawing an AdvancedWasteNetwork and the losses along one path."""
 
-from src.advanced_network import (
+from pathlib import Path
+
+from ecoanalyst.legacy.advanced_network import (
     AdvancedWasteNetwork, InitialProducer, FoodProcessor,
     FoodHandler, EndConsumer, SolutionProvider,
     StaticWaste, TimeBasedWaste, MultiVariableWaste,
@@ -87,21 +89,24 @@ def create_sample_network():
     return network
 
 def main():
+    output_dir = Path(__file__).parent / "output"
+    output_dir.mkdir(exist_ok=True)
+
     # Create and visualize network
     network = create_sample_network()
     
     # Generate network visualization with all annotations
-    network.visualize_network(save_path='data/advanced_network_visualization.png')
+    network.visualize_network(save_path=output_dir / "advanced_network_visualization.png")
     print("Generated advanced network visualization")
     
     # Analyze and visualize specific path
     path = ["farm", "processor", "warehouse", "store"]
-    network.visualize_path_waste(path, save_path='data/network_visualization.png')
+    network.visualize_path_waste(path, save_path=output_dir / "network_visualization.png")
     print("Generated path waste visualization")
     
     print("\nVisualizations have been saved to:")
-    print("- data/advanced_network_visualization.png: Detailed network structure")
-    print("- data/network_visualization.png: Path-specific waste analysis")
+    print("- examples/output/advanced_network_visualization.png: Detailed network structure")
+    print("- examples/output/network_visualization.png: Path-specific waste analysis")
 
 if __name__ == '__main__':
     main()

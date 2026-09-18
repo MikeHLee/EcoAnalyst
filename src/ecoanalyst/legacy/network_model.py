@@ -1,11 +1,18 @@
 """
-network_model.py: Core network modeling functionality for waste networks.
-Implements directed graph representation of supply chains with waste metrics.
+network_model.py: WasteNetwork, the EcoAnalyst 1.x network model.
+
+A directed graph of nodes and edges, each with a loss rate (the fraction of
+what passes through that is lost). Path losses compound:
+total = 1 - prod(1 - rate_i).
+
+To move a WasteNetwork JSON file to the current format, load it with
+``ecoanalyst.EcosystemNetwork.load_from_json`` (the format is detected) or run
+``ecoanalyst convert``.
 """
 
 import json
+import math
 import networkx as nx
-import numpy as np
 from typing import Dict, List, Tuple, Any
 
 class WasteNetwork:
@@ -52,50 +59,55 @@ class WasteNetwork:
         
     def calculate_path_waste(self, path: List[str]) -> Tuple[float, Dict[str, float]]:
         """
-        Calculate total waste along a path.
-        
+        Calculate the compounded loss along a path.
+
         Args:
             path: List of node IDs representing a path
-            
+
         Returns:
-            Tuple of (total waste percentage, waste breakdown by node/edge)
+            Tuple of (total loss fraction, loss rate by node and edge)
         """
-        total_waste = 0.0
+        retained = 1.0
         waste_breakdown = {}
-        
-        # Calculate node waste
+
         for node in path:
             node_waste = self.graph.nodes[node]['waste_rate']
-            total_waste += node_waste
+            retained *= 1.0 - node_waste
             waste_breakdown[f"node_{node}"] = node_waste
-            
-        # Calculate edge waste
+
         for i in range(len(path)-1):
             source, target = path[i], path[i+1]
             edge_waste = self.graph.edges[source, target]['transport_waste']
-            total_waste += edge_waste
+            retained *= 1.0 - edge_waste
             waste_breakdown[f"transport_{source}_{target}"] = edge_waste
-            
-        return total_waste, waste_breakdown
+
+        return 1.0 - retained, waste_breakdown
     
     def find_minimum_waste_path(self, source: str, target: str) -> Tuple[List[str], float]:
         """
-        Find the path with minimum waste between two nodes.
-        
+        Find the path that loses the smallest fraction between two nodes.
+
+        Each edge u->v is weighted by -log(1 - transport_waste) - log(1 - waste_rate[u]),
+        so the shortest path is the one that retains the most. Edges or
+        source nodes with a rate of 1 carry nothing and are skipped.
+
         Args:
             source: Starting node ID
             target: Ending node ID
-            
+
         Returns:
-            Tuple of (path, total waste)
+            Tuple of (path, total loss fraction), or (None, inf) if there is no path
         """
         def waste_weight(u, v, edge_data):
-            return (edge_data['transport_waste'] + 
-                   self.graph.nodes[u]['waste_rate'])
-            
+            edge_rate = edge_data['transport_waste']
+            node_rate = self.graph.nodes[u]['waste_rate']
+            if edge_rate >= 1.0 or node_rate >= 1.0:
+                return None
+            return -math.log1p(-edge_rate) - math.log1p(-node_rate)
+
         try:
-            path = nx.shortest_path(self.graph, source, target, 
-                                  weight=waste_weight)
+            path = nx.shortest_path(self.graph, source, target,
+                                    weight=waste_weight)
             total_waste, _ = self.calculate_path_waste(path)
             return path, total_waste
         except nx.NetworkXNoPath:

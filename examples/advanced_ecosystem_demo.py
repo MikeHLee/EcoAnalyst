@@ -1,19 +1,20 @@
 """
-advanced_ecosystem_demo.py: Comprehensive demonstration of advanced network functionality.
+advanced_ecosystem_demo.py: fit loss regressions and apply them to an AdvancedWasteNetwork (needs the bayes extra).
 """
 
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from src.advanced_network import (
+from pathlib import Path
+from ecoanalyst.legacy.advanced_network import (
     AdvancedWasteNetwork, NodeType, EdgeType, FlowType,
     InitialProducer, FoodProcessor, FoodHandler, EndConsumer, SolutionProvider,
     InventoryEdge, ServiceEdge, CurrencyEdge
 )
-from src.causal_analysis import WasteCausalNetwork, RegressionResult
+from ecoanalyst.legacy.causal_analysis import WasteCausalNetwork, RegressionResult
 
 def create_demo_causal_models():
-    """Create example causal models for waste prediction."""
+    """Fit regressions of simulated node and edge losses."""
     # Create synthetic data
     np.random.seed(42)
     n_samples = 1000
@@ -50,7 +51,7 @@ def create_demo_causal_models():
         np.random.normal(0, 0.01, n_samples)  # noise
     ).clip(0, 1)
     
-    # Create and fit causal models
+    # Fit one regression for node losses and one for edge losses
     node_model = WasteCausalNetwork()
     node_model.add_data(node_data)
     node_model.fit()
@@ -62,7 +63,7 @@ def create_demo_causal_models():
     return node_model, edge_model
 
 def create_advanced_ecosystem():
-    """Create a comprehensive example network with all node types."""
+    """Create an example network with five nodes of each type."""
     network = AdvancedWasteNetwork()
     
     # Create nodes (5 of each type)
@@ -129,13 +130,13 @@ def create_advanced_ecosystem():
     return network
 
 def main():
-    # Create causal models
+    # Fit loss regressions
     node_model, edge_model = create_demo_causal_models()
     
     # Create network
     network = create_advanced_ecosystem()
     
-    # Apply causal models to nodes and edges
+    # Use the fitted regressions as loss functions
     for node in network.nodes.values():
         node.set_waste_function(node_model.regression_results['waste'])
         # Set example features
@@ -166,7 +167,9 @@ def main():
             'Edge Waste': edge_model.regression_results['waste']
         }
     )
-    plt.savefig('advanced_ecosystem.png', dpi=300, bbox_inches='tight')
+    output_dir = Path(__file__).parent / "output"
+    output_dir.mkdir(exist_ok=True)
+    plt.savefig(output_dir / "advanced_ecosystem.png", dpi=300, bbox_inches="tight")
     plt.close()
     
     # Run some example analyses
@@ -193,7 +196,7 @@ def main():
             waste = edge.calculate_waste()
             total_waste += waste
     
-    print(f"\nTotal system waste: {total_waste:.3f}")
+    print(f"\nSum of loss rates over all nodes and inventory edges: {total_waste:.3f}")
     print("\nNode waste breakdown:")
     for node_id, waste in waste_breakdown.items():
         print(f"{node_id}: {waste:.3f}")

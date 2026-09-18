@@ -1,8 +1,14 @@
 """
-advanced_network.py: Advanced network modeling functionality with support for
-complex node types, inventory management, and multi-dimensional edge properties.
+advanced_network.py: Network model with typed node and edge classes and
+pluggable loss functions (EcoAnalyst 1.x).
+
+matplotlib is imported inside the drawing methods, so importing this module
+only needs numpy and networkx.
 """
 
+from __future__ import annotations
+
+import math
 from enum import Enum
 from typing import Dict, List, Tuple, Any, Union, Callable, Optional, Set
 import networkx as nx
@@ -10,8 +16,6 @@ import numpy as np
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from collections import defaultdict
-import matplotlib.pyplot as plt
-from matplotlib.patches import FancyArrowPatch, Rectangle, Circle
 from .causal_analysis import WasteCausalNetwork, RegressionResult
 
 class NodeType(Enum):
@@ -42,11 +46,14 @@ class Inventory:
     currency_type: str = "USD"
 
 class WasteFunction(ABC):
-    """Abstract base class for waste calculation functions."""
+    """Abstract base class for loss functions. Instances are callable."""
     @abstractmethod
     def calculate(self, **kwargs) -> float:
-        """Calculate waste percentage based on input parameters."""
+        """Return the loss fraction for the given conditions."""
         pass
+
+    def __call__(self, **kwargs) -> float:
+        return self.calculate(**kwargs)
 
 class StaticWaste(WasteFunction):
     """Static waste percentage."""
@@ -57,12 +64,12 @@ class StaticWaste(WasteFunction):
         return self.fraction
 
 class TimeBasedWaste(WasteFunction):
-    """Time-dependent waste calculation."""
+    """Loss that grows linearly with time: base_rate + time_coefficient * time."""
     def __init__(self, base_rate: float, time_coefficient: float):
         self.base_rate = base_rate
         self.time_coefficient = time_coefficient
-    
-    def calculate(self, time: float, **kwargs) -> float:
+
+    def calculate(self, time: float = 0.0, **kwargs) -> float:
         return self.base_rate + (self.time_coefficient * time)
 
 class MultiVariableWaste(WasteFunction):
@@ -74,7 +81,15 @@ class MultiVariableWaste(WasteFunction):
         return self.func(**kwargs)
 
 class CausalWasteFunction:
-    """Waste function based on causal regression model."""
+    """Loss function that evaluates a fitted linear regression.
+
+    It computes intercept + sum(coefficient * feature) using the posterior
+    mean coefficients and clamps the result to [0, 1]. The name is
+    historical; it applies regression coefficients and nothing more.
+    Coefficients from ``WasteCausalNetwork.fit_regression`` are on
+    standardized features, while this function uses raw feature values, so
+    pair it with results from ``WasteCausalNetwork.fit``.
+    """
     def __init__(self, regression_result: RegressionResult):
         self.regression = regression_result
         
@@ -100,6 +115,20 @@ class CausalWasteFunction:
                 
         return max(0.0, min(1.0, waste))  # Clamp to valid waste range
 
+def _as_loss_function(source) -> Callable[..., float]:
+    """Wrap a RegressionResult; pass WasteFunction objects and plain callables through."""
+    if isinstance(source, RegressionResult):
+        return CausalWasteFunction(source)
+    if callable(source):
+        return source
+    raise TypeError(
+        "Expected a RegressionResult, a WasteFunction, or a callable, "
+        f"got {type(source).__name__}"
+    )
+
+def _clamp_fraction(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
 class AdvancedNode:
     """Base class for all node types in the advanced network."""
     def __init__(self, node_id: str, node_type: NodeType):
@@ -116,19 +145,19 @@ class AdvancedNode:
         """Add an activity with associated costs and revenues."""
         self.activities[name] = {"cost": cost, "revenue": revenue}
 
-    def set_waste_function(self, regression_result: RegressionResult):
-        """Set waste function from regression results."""
-        self.waste_function = CausalWasteFunction(regression_result)
+    def set_waste_function(self, source):
+        """Set the loss function from a RegressionResult, a WasteFunction, or any callable."""
+        self.waste_function = _as_loss_function(source)
         
     def set_features(self, **features):
         """Update current feature values."""
         self.features.update(features)
         
-    def calculate_waste(self) -> float:
-        """Calculate current waste based on features."""
+    def calculate_waste(self, **conditions) -> float:
+        """Evaluate the loss function on the stored features plus any extra conditions."""
         if self.waste_function is None:
             return 0.0
-        return self.waste_function(**self.features)
+        return self.waste_function(**{**self.features, **conditions})
 
 class SolutionProvider(AdvancedNode):
     """Node that provides services affecting edge costs."""
@@ -173,19 +202,19 @@ class AdvancedEdge:
         self.waste_function = None
         self.features = {}
         
-    def set_waste_function(self, regression_result: RegressionResult):
-        """Set waste function from regression results."""
-        self.waste_function = CausalWasteFunction(regression_result)
+    def set_waste_function(self, source):
+        """Set the loss function from a RegressionResult, a WasteFunction, or any callable."""
+        self.waste_function = _as_loss_function(source)
         
     def set_features(self, **features):
         """Update current feature values."""
         self.features.update(features)
         
-    def calculate_waste(self) -> float:
-        """Calculate current waste based on features."""
+    def calculate_waste(self, **conditions) -> float:
+        """Evaluate the loss function on the stored features plus any extra conditions."""
         if self.waste_function is None:
             return 0.0
-        return self.waste_function(**self.features)
+        return self.waste_function(**{**self.features, **conditions})
 
 class InventoryEdge(AdvancedEdge):
     """Edge representing inventory transfer."""
@@ -211,6 +240,13 @@ class CurrencyEdge(AdvancedEdge):
 
 class AdvancedWasteNetwork:
     """Advanced network model supporting complex nodes, edges, and waste calculations."""
+    _FLOW_TO_EDGE_TYPE = {
+        FlowType.FOOD: EdgeType.INVENTORY,
+        FlowType.CURRENCY: EdgeType.CURRENCY,
+        FlowType.SERVICE: EdgeType.SERVICE,
+        FlowType.INVENTORY: EdgeType.INVENTORY,
+    }
+
     def __init__(self):
         self.graph = nx.MultiDiGraph()
         self.nodes: Dict[str, AdvancedNode] = {}
@@ -235,12 +271,7 @@ class AdvancedWasteNetwork:
     def get_edges_by_type(self, flow_type: FlowType) -> Dict[Tuple[str, str], List[AdvancedEdge]]:
         """Get all edges of a specific flow type."""
         edge_map = defaultdict(list)
-        edge_type = {
-            FlowType.FOOD: EdgeType.INVENTORY,
-            FlowType.CURRENCY: EdgeType.CURRENCY,
-            FlowType.SERVICE: EdgeType.SERVICE,
-            FlowType.INVENTORY: EdgeType.INVENTORY
-        }[flow_type]
+        edge_type = self._FLOW_TO_EDGE_TYPE[flow_type]
         
         for source, target, edge_data in self.graph.edges(data=True):
             edge = edge_data['edge']
@@ -287,40 +318,51 @@ class AdvancedWasteNetwork:
         cost_func: Optional[Callable] = None,
         capacity_constraints: Optional[Dict[str, float]] = None
     ) -> List[Tuple[List[str], float]]:
-        """Find minimum cost paths between sources and targets."""
-        # Create a new graph for path finding
+        """Find the lowest-loss path for every source/target pair.
+
+        Only edges of the edge type that matches ``flow_type`` are used.
+        Losses compound along a path, so each edge is weighted by
+        -log(1 - loss) and the reported cost is the compounded edge loss
+        1 - prod(1 - loss_i). Edges with a loss of 1 or more carry nothing
+        and are skipped. ``cost_func`` and ``capacity_constraints`` are
+        accepted for compatibility and are not used.
+
+        Returns:
+            List of (path, compounded_edge_loss) sorted by loss
+        """
+        edge_type = self._FLOW_TO_EDGE_TYPE[flow_type]
         G = nx.DiGraph()
-        
-        # Add nodes and edges based on flow type
-        for node_id, node in self.nodes.items():
-            G.add_node(node_id)
-        
+        G.add_nodes_from(self.nodes)
+
         for (u, v, data) in self.graph.edges(data=True):
             edge = data['edge']
-            if edge.edge_type == flow_type:
-                G.add_edge(u, v, weight=edge.calculate_waste())
-        
-        # Get default sources and targets if not specified
+            if edge.edge_type != edge_type:
+                continue
+            loss = _clamp_fraction(edge.calculate_waste())
+            if loss >= 1.0:
+                continue
+            weight = -math.log1p(-loss)
+            if not G.has_edge(u, v) or weight < G[u][v]['weight']:
+                G.add_edge(u, v, weight=weight)
+
         if sources is None:
-            sources = [n for n, d in self.graph.nodes(data=True)
-                      if isinstance(self.nodes[n], InitialProducer)]
+            sources = [n for n in self.graph.nodes
+                       if isinstance(self.nodes[n], InitialProducer)]
         if targets is None:
-            targets = [n for n, d in self.graph.nodes(data=True)
-                      if isinstance(self.nodes[n], EndConsumer)]
-        
-        # Find shortest paths
+            targets = [n for n in self.graph.nodes
+                       if isinstance(self.nodes[n], EndConsumer)]
+
         paths = []
         for source in sources:
             for target in targets:
                 try:
                     path = nx.shortest_path(G, source, target, weight='weight')
-                    cost = sum(G[path[i]][path[i+1]]['weight'] 
-                             for i in range(len(path)-1))
-                    paths.append((path, cost))
                 except nx.NetworkXNoPath:
                     continue
-        
-        # Sort by cost
+                total_weight = sum(G[path[i]][path[i + 1]]['weight']
+                                   for i in range(len(path) - 1))
+                paths.append((path, 1.0 - math.exp(-total_weight)))
+
         paths.sort(key=lambda x: x[1])
         return paths
 
@@ -332,38 +374,44 @@ class AdvancedWasteNetwork:
         humidity: Optional[float] = None,
         **kwargs
     ) -> Tuple[float, Dict[str, float]]:
-        """Calculate total waste along a path."""
-        total_waste = 0.0
+        """Compounded loss along a path.
+
+        Each node's loss function and the lowest-loss inventory edge between
+        each pair of consecutive nodes are evaluated with the given
+        conditions. The total is 1 - prod(1 - loss_i), so it stays in [0, 1].
+
+        Returns:
+            Tuple of (total loss fraction, loss by node id and by "src->tgt")
+        """
+        params = {"time": time, **kwargs}
+        if temperature is not None:
+            params["temperature"] = temperature
+        if humidity is not None:
+            params["humidity"] = humidity
+
+        retained = 1.0
         waste_breakdown = {}
-        
-        # Calculate node waste
+
         for node in path:
-            params = {"time": time, **kwargs}
-            if temperature is not None:
-                params["temperature"] = temperature
-            if humidity is not None:
-                params["humidity"] = humidity
-                
-            node_waste = self.nodes[node].calculate_waste()
-            total_waste += node_waste
+            node_waste = _clamp_fraction(self.nodes[node].calculate_waste(**params))
+            retained *= 1.0 - node_waste
             waste_breakdown[node] = node_waste
-            
-        # Calculate edge waste
-        for i in range(len(path)-1):
-            source, target = path[i], path[i+1]
-            edge_key = (source, target)
-            edge_waste = 0.0
-            
-            for _, _, edge_data in self.graph.edges(data=True):
-                edge = edge_data['edge']
-                if isinstance(edge, InventoryEdge):
-                    edge_waste = edge.calculate_waste()
-                    total_waste += edge_waste
-                    
+
+        for i in range(len(path) - 1):
+            source, target = path[i], path[i + 1]
+            edge_losses = [
+                _clamp_fraction(data['edge'].calculate_waste(**params))
+                for data in (self.graph.get_edge_data(source, target) or {}).values()
+                if isinstance(data['edge'], InventoryEdge)
+            ]
+            if not edge_losses:
+                continue
+            edge_waste = min(edge_losses)
+            retained *= 1.0 - edge_waste
             if edge_waste > 0:
                 waste_breakdown[f"{source}->{target}"] = edge_waste
-                    
-        return total_waste, waste_breakdown
+
+        return 1.0 - retained, waste_breakdown
 
     def visualize_network(
         self,
@@ -373,6 +421,9 @@ class AdvancedWasteNetwork:
         regression_results: Optional[Dict[str, RegressionResult]] = None
     ) -> Optional[plt.Axes]:
         """Create a detailed visualization of the network with annotations."""
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import FancyArrowPatch, Rectangle, Circle
+
         if ax is None:
             _, ax = plt.subplots(figsize=(15, 10))
             
@@ -501,6 +552,8 @@ class AdvancedWasteNetwork:
 
     def visualize_path_waste(self, path, save_path=None):
         """Create a visualization focusing on waste along a specific path."""
+        import matplotlib.pyplot as plt
+
         waste, breakdown = self.calculate_path_waste(path)
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 20))
