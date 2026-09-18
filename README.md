@@ -1,10 +1,16 @@
 # EcoAnalyst
 
-EcoAnalyst models a supply chain, energy system, or other flow network as a directed graph of producers, processors, handlers, and consumers. Each node and edge can carry a capacity, a loss rate, and costs. The library computes how much is lost along a route, finds the route that delivers the most, prices the losses, and exchanges networks as JSON through a Python API, a command line tool, a local REST server, and an MCP server.
+EcoAnalyst models a supply chain, energy system, or other flow network as a directed graph of producers, processors, handlers, and consumers. Each node and edge can carry a capacity, a loss rate, an efficiency, and costs. The library computes how much is lost along a route, finds the route that delivers the most, and prices the losses. A causal graph can run beside the network to explain its loss rates and to estimate what an intervention would change. Networks are exchanged as JSON through a Python API, a command line tool, a local REST server, and an MCP server.
 
 ## Install
 
 EcoAnalyst needs Python 3.10 or later.
+
+```bash
+pip install ecoanalyst
+```
+
+To work on the code, install from a clone instead:
 
 ```bash
 git clone https://github.com/MikeHLee/ecoanalyst.git
@@ -25,7 +31,7 @@ The core install depends on networkx, numpy, and pydantic. Optional parts are ex
 | `dev` | pytest, httpx, fastapi, jsonschema | running the tests |
 | `all` | everything except `dev` | |
 
-For example: `pip install -e ".[api,mcp]"`.
+For example: `pip install "ecoanalyst[api,mcp]"`, or `pip install -e ".[api,mcp]"` in a clone.
 
 ## Quick start
 
@@ -109,7 +115,23 @@ total loss = 1 - (1 - w1)(1 - w2)...(1 - wn)
 
 Two steps that lose 10% and 20% lose 1 - 0.9 × 0.8 = 28% together, not 30%. The total never exceeds 100%.
 
-`find_minimum_waste_path` weights each edge by -log(1 - w_edge) - log(1 - w_source_node). A shortest path under these weights is the path that keeps the largest fraction. An edge with a loss rate of 1 carries nothing and is skipped. When two nodes are joined by several edges, the path uses the one with the lowest loss rate; pass `edge_kinds` to limit which kinds are eligible.
+`find_minimum_waste_path` weights each edge by -log(r_edge) - log(r_source_node), where r is the fraction a component passes on (1 - w without conversion). A shortest path under these weights is the path that delivers the largest fraction. A component that passes on nothing is skipped. When two nodes are joined by several edges, the path uses the one that passes on the most; pass `edge_kinds` to limit which kinds are eligible. `calculate_path_transfer(path)` splits one unit of input into the delivered, wasted, and converted fractions.
+
+### Efficiency
+
+Nodes and edges have an optional `efficiency` field. How it counts depends on the network's `efficiency_mode`, which a node or edge can override with its own `efficiency_mode`:
+
+| Mode | Output of a component | Use it when |
+|------|-----------------------|-------------|
+| `ignore` (default) | input × (1 - waste_rate); efficiency is stored only | efficiency is informational |
+| `conversion` | input × (1 - waste_rate) × efficiency | the component turns one thing into another (a mill's flour yield, a solar panel's conversion) and also loses some of what it handles |
+| `retention` | input × efficiency | a data source reports efficiency instead of a loss rate |
+
+In `conversion` mode the shortfall is reported as `converted` (and `total_converted` in `calculate_path_cost`) and is not priced as waste. In `retention` mode, a component that also sets `waste_rate` must use 1 - efficiency, or the calculation raises an error. `check_loss_config()` lists those conflicts, and warns about `conversion` components whose efficiency equals 1 - waste_rate, which usually means the same loss was entered twice.
+
+```python
+net = EcosystemNetwork(name="Mill", efficiency_mode="conversion")
+```
 
 There are two cost estimates in `EconomicAnalysis`:
 
@@ -119,6 +141,61 @@ There are two cost estimates in `EconomicAnalysis`:
 | `calculate_waste_cost()` | Takes each node at capacity × count and each edge at its max rate, and multiplies by its own loss rate. It ranks components quickly but does not follow material between them, so it is not a mass balance. |
 
 `identify_hotspots()` ranks components by loss rate or by the capacity-based loss quantity. `calculate_total_cost_of_ownership()` adds capex, installation, and discounted annual opex, and subtracts the discounted salvage value.
+
+## Causal layer
+
+The flow network describes what moves where and what each component loses. A causal graph (`ecoanalyst.causal.CausalModel`) can run in parallel to it and describe why the loss rates, efficiencies, and capacities take the values they do. Each causal variable has an equation in its parents, and a variable can be bound to one parameter of the network, such as a cold store's `waste_rate`. Sampling the causal graph produces many sets of parameters; evaluating the network once per set turns them into a distribution for any flow outcome.
+
+<!-- tests/test_readme.py runs the next code block and checks the commented output (causal). -->
+```python
+from ecoanalyst import CausalModel, EcosystemNetwork, compare
+from ecoanalyst.causal import link, path_delivered
+
+net = EcosystemNetwork(name="Cold chain")
+for node_id, kind in [("farm", "producer"), ("store", "handler"), ("shop", "consumer")]:
+    net.add_node(kind, node_id.title(), node_id.title(), node_id=node_id,
+                 properties={"waste_rate": 0.02})
+net.add_edge("farm", "store", "inventory", {"waste_rate": 0.01})
+net.add_edge("store", "shop", "inventory", {"waste_rate": 0.01})
+
+model = CausalModel()
+model.add_variable("ambient_temp", intercept=24.0, noise_sd=4.0, unit="C")
+model.add_variable("cooling_uptime", kind="rate", intercept=link("rate", 0.95), noise_sd=0.5)
+model.add_variable(
+    "store_spoilage", kind="rate", parents=["ambient_temp", "cooling_uptime"],
+    intercept=-2.0, coefficients={"ambient_temp": 0.08, "cooling_uptime": -4.0}, noise_sd=0.2,
+    binds="node:store:waste_rate",  # drives the store's loss rate
+)
+net.causal = model
+
+effect = compare(net, path_delivered(["farm", "store", "shop"]),
+                 do_a={"cooling_uptime": 0.99}, do_b={"cooling_uptime": 0.80}, n=5000, seed=1)
+print(f"Delivered: {effect['mean_a']:.4f} at 99% uptime, {effect['mean_b']:.4f} at 80%")
+print(f"Effect of the better uptime: {effect['effect']:+.4f}")
+# Delivered: 0.9240 at 99% uptime, 0.9051 at 80%
+# Effect of the better uptime: +0.0188
+```
+
+Variables have one of four kinds. The equation is linear on the kind's link scale, so `intercept`, `coefficients`, and `noise_sd` are on that scale (`link("rate", 0.95)` converts a natural value):
+
+| Kind | Link | Values | Equation |
+|------|------|--------|----------|
+| `continuous` | identity | any real | b0 + Σ b·parent + noise |
+| `rate` | logit | 0 to 1 | sigmoid(b0 + Σ b·parent + noise) |
+| `positive` | log | greater than 0 | exp(b0 + Σ b·parent + noise) |
+| `binary` | logit | 0 or 1 | Bernoulli(sigmoid(b0 + Σ b·parent)) |
+
+A binding is written `"node:<id>:<field>"` or `"edge:<id>:<field>"`. Nodes accept `waste_rate`, `efficiency`, `degradation_rate` (rate variables) and `capacity` (a positive variable); edges accept `waste_rate`, `efficiency` (rate) and `max_rate` (positive).
+
+| Function | What it does |
+|----------|--------------|
+| `simulate(net, outcomes, n, do, seed)` | Samples the graph, sets the bound parameters for each sample, and evaluates each outcome. Outcomes are `path_waste`, `path_delivered`, `best_route_delivered` (re-routes per sample), `waste_cost`, `path_cost`, your own function of the network, or the name of a causal variable. |
+| `compare(net, outcome, do_a, do_b, n, seed)` | Mean outcome under two interventions and the difference. Both runs share their random draws, so the difference comes from the interventions alone. |
+| `model.fit(data)` | Updates each equation from columns of data (a dict or a pandas DataFrame). Continuous, rate, and positive variables get an exact normal-inverse-gamma posterior with the stated values as the prior mean; binary variables get a Laplace approximation. Later samples carry the parameter uncertainty. |
+| `model.adjustment_set(x, y)` | A minimal set of observed variables that satisfies the back-door criterion for estimating the effect of x on y from observational data, or None. Mark a variable `observed=False` if you cannot measure it. |
+| `model.to_gml()` | The graph as GML, which DoWhy's `CausalModel(graph=...)` accepts, if you want other estimators. |
+
+`do={"x": value}` replaces the equation of `x` with that value for every sample, and the change reaches the flow outcomes through the graph. A result is a causal effect only if the graph is right: every common cause of the variables involved must be in the graph (as an unobserved variable if you cannot measure it), and the equations must be a fair description. The causal graph is saved with the network in both JSON formats. [`examples/causal_cold_chain.py`](https://github.com/MikeHLee/EcoAnalyst/blob/main/examples/causal_cold_chain.py) fits a graph to a year of sensor readings and estimates the effect of backup power on a cold chain.
 
 ## Flow-graph export
 
@@ -134,7 +211,7 @@ with open("chain.flowgraph.json") as f:
     again = EcosystemNetwork.from_flow_graph(json.load(f))
 ```
 
-The format is described in [docs/flow_graph_format.md](docs/flow_graph_format.md), with a JSON Schema in [docs/flowgraph.schema.json](docs/flowgraph.schema.json). `EcosystemNetwork.load_from_json()` detects the format of a file: the native format written by `save_to_json()` (including 2.x files), a flow graph, or a 1.x `WasteNetwork` file.
+The format is described in [docs/flow_graph_format.md](https://github.com/MikeHLee/EcoAnalyst/blob/main/docs/flow_graph_format.md), with a JSON Schema in [docs/flowgraph.schema.json](https://github.com/MikeHLee/EcoAnalyst/blob/main/docs/flowgraph.schema.json). `EcosystemNetwork.load_from_json()` detects the format of a file: the native format written by `save_to_json()` (including 2.x files), a flow graph, or a 1.x `WasteNetwork` file.
 
 ## Command line
 
@@ -162,7 +239,7 @@ Browsers on other origins are refused by default. To allow a front end on anothe
 ECOANALYST_CORS_ORIGINS=http://localhost:5173 uvicorn ecoanalyst.api:app
 ```
 
-The interactive API reference is at `http://localhost:8000/docs` while the server runs. [docs/integration.md](docs/integration.md) has curl examples for each endpoint.
+The interactive API reference is at `http://localhost:8000/docs` while the server runs. [docs/integration.md](https://github.com/MikeHLee/EcoAnalyst/blob/main/docs/integration.md) has curl examples for each endpoint.
 
 ## MCP server
 
@@ -180,7 +257,7 @@ The MCP server exposes the library to MCP clients such as Claude Desktop over st
 
 If the client does not see your virtual environment's `PATH`, give the full path, for example `/path/to/ecoanalyst/.venv/bin/ecoanalyst-mcp`. Configurations that run `python mcp_server.py` from a clone keep working, as long as that Python has networkx, numpy, pydantic, and mcp installed.
 
-The tools are `create_network`, `list_networks`, `get_network`, `delete_network`, `add_node`, `add_edge`, `calculate_waste`, `find_minimum_waste_path`, `identify_hotspots`, `compare_paths`, `export_flow_graph`, and `import_flow_graph`. Networks live in the server process and are lost when it exits; use `export_flow_graph` to keep one.
+The tools are `create_network`, `list_networks`, `get_network`, `delete_network`, `add_node`, `add_edge`, `calculate_waste`, `find_minimum_waste_path`, `identify_hotspots`, `compare_paths`, `export_flow_graph`, `import_flow_graph`, and four for the causal layer: `add_causal_variable`, `simulate_intervention`, `compare_interventions`, and `causal_adjustment_set`. Networks live in the server process and are lost when it exits; use `export_flow_graph` to keep one.
 
 ## Legacy modules
 
@@ -193,14 +270,14 @@ The 1.x modules live in `ecoanalyst.legacy` for existing scripts:
 | `ecoanalyst.legacy.causal_analysis` | `WasteCausalNetwork`, Bayesian linear regression of loss on its drivers (needs `bayes`) |
 | `ecoanalyst.legacy.network_viz` | matplotlib helpers for `AdvancedWasteNetwork` (needs `viz`) |
 
-`WasteCausalNetwork` fits linear models with PyMC. Its results describe associations in the data you give it. The names `get_causal_effect` and `discover_causal_structure` are kept for compatibility: the first multiplies weights that you attach to graph edges, and the second joins columns whose pairwise correlation passes a significance threshold. Neither estimates cause and effect.
+`WasteCausalNetwork` fits linear models with PyMC. Its results describe associations in the data you give it. The names `get_causal_effect` and `discover_causal_structure` are kept for compatibility: the first multiplies weights that you attach to graph edges, and the second joins columns whose pairwise correlation passes a significance threshold. Neither estimates cause and effect; use the causal layer above for that.
 
 The scripts in `examples/` show both the current API (`ecoanalyst_demo.py`) and the legacy modules. They write their output to `examples/output/`.
 
 ## Whitepaper
 
-`whitepaper/main.pdf` (source in `whitepaper/main.tex`) sets out the graph model, loss functions, and regression approach behind the 1.x modules. Its path cost sums per-edge losses; the library now compounds them as described above.
+[`whitepaper/main.pdf`](https://github.com/MikeHLee/EcoAnalyst/blob/main/whitepaper/main.pdf) (source in `whitepaper/main.tex`) sets out the graph model, compounded losses and routing, the efficiency modes, the causal layer, and the regression approach of the 1.x modules.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/MikeHLee/EcoAnalyst/blob/main/LICENSE).

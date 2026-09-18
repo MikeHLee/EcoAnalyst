@@ -142,7 +142,7 @@ The path query returns the route through the cold store with `total_waste` of ab
 
 ## MCP
 
-Install the `mcp` extra (`pip install -e ".[mcp]"`). The `ecoanalyst-mcp` command runs the server on stdio. A client configuration looks like this:
+Install the `mcp` extra (`pip install "ecoanalyst[mcp]"`). The `ecoanalyst-mcp` command runs the server on stdio. A client configuration looks like this:
 
 ```json
 {
@@ -156,18 +156,24 @@ Install the `mcp` extra (`pip install -e ".[mcp]"`). The `ecoanalyst-mcp` comman
 
 | Tool | Arguments |
 |------|-----------|
-| `create_network` | `name`, `network_type`, `description` |
+| `create_network` | `name`, `network_type`, `description`, `efficiency_mode` |
 | `list_networks` | `limit` |
 | `get_network` | `network_id` |
 | `delete_network` | `network_id` |
-| `add_node` | `network_id`, `node_type`, `node_class`, `name`, `capacity_value`, `capacity_unit`, `waste_rate`, `efficiency`, `count`, `metadata` |
-| `add_edge` | `network_id`, `source_node_id`, `target_node_id`, `flow_type`, `max_rate_value`, `max_rate_unit`, `transport_waste_rate`, `transport_time_hours`, `polarity` |
+| `add_node` | `network_id`, `node_type`, `node_class`, `name`, `capacity_value`, `capacity_unit`, `waste_rate`, `efficiency`, `efficiency_mode`, `count`, `metadata` |
+| `add_edge` | `network_id`, `source_node_id`, `target_node_id`, `flow_type`, `max_rate_value`, `max_rate_unit`, `transport_waste_rate`, `transport_time_hours`, `polarity`, `efficiency`, `efficiency_mode` |
 | `calculate_waste` | `network_id`, `pricing_data` |
 | `find_minimum_waste_path` | `network_id`, `source_node_id`, `target_node_id`, `edge_kinds` |
 | `identify_hotspots` | `network_id`, `top_n`, `metric` |
 | `compare_paths` | `network_id`, `source_node_id`, `target_node_id`, `max_paths`, `edge_kinds` |
 | `export_flow_graph` | `network_id` |
 | `import_flow_graph` | `flow_graph` |
+| `add_causal_variable` | `network_id`, `name`, `kind`, `parents`, `intercept`, `coefficients`, `noise_sd`, `binds` (`"node:<id>:<field>"`), `observed`, `unit`, `description` |
+| `simulate_intervention` | `network_id`, `outcome`, `do`, `n`, `seed`, and `path` or `source_node_id` + `target_node_id` or `pricing_data` as the outcome needs, `edge_kinds` |
+| `compare_interventions` | `network_id`, `outcome`, `do_a`, `do_b`, `n`, `seed`, plus the outcome arguments above |
+| `causal_adjustment_set` | `network_id`, `treatment`, `outcome` |
+
+`outcome` is `path_waste`, `path_delivered`, or `path_cost` (these need `path`), `best_route_delivered` (needs `source_node_id` and `target_node_id`), `waste_cost`, or the name of a causal variable. See the README's causal layer section for what the variables and bindings mean.
 
 The server also serves each network as the resource `network://{network_id}`. Networks exist only while the server runs. To keep one, call `export_flow_graph` and save the result; to restore it, pass that document to `import_flow_graph`.
 

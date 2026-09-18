@@ -81,8 +81,10 @@ The flow graph is a JSON format for moving an EcoAnalyst network between program
 | `name` | no | Network name. |
 | `description` | no | Free text. |
 | `network_type` | no | Free text such as `supply_chain` or `energy`. |
+| `settings` | no | `{"efficiency_mode": "ignore" \| "conversion" \| "retention"}`, the network's default efficiency mode. Missing means `ignore`. |
 | `actors` | yes | List of actors. |
 | `flows` | yes | List of flows. |
+| `causal` | no | `{"variables": [...]}`, the causal graph that runs beside the network. See below. Written only when the network has one. |
 
 ## Actors
 
@@ -94,7 +96,7 @@ The flow graph is a JSON format for moving an EcoAnalyst network between program
 | `class` | no | Specific class such as `Farm` or `Substation`. Defaults to the kind on import. |
 | `geometry` | no | GeoJSON-like object with a string `type`, for example a `Point`. Written only when set. |
 | `series_ref` | no | String that points at a time series stored elsewhere (a path, URL, or key). EcoAnalyst stores it and does not read it. Written only when set. |
-| `attrs.properties` | no | `NodeProperties`: `capacity` (`value`, `unit`), `efficiency`, `lifetime_years`, `waste_rate`, `degradation_rate`, `count`. A missing capacity becomes 100 units/day on import. |
+| `attrs.properties` | no | `NodeProperties`: `capacity` (`value`, `unit`), `efficiency` (or null), `efficiency_mode` (or null for the network default), `lifetime_years`, `waste_rate`, `degradation_rate`, `count`. A missing capacity becomes 100 units/day on import. |
 | `attrs.financials` | no | `NodeFinancials`: `capex`, `opex_annual`, `installation`, `waste_cost_per_unit`, `salvage_value`, each `{"value", "currency"}`. Written only when set. |
 | `attrs.operations` | no | `NodeOperations`: `storage_days`, `temperature_range`, `humidity_range`, `annual_throughput`, `operating_hours`, `constraints`. Written only when set. |
 | `attrs.position` | no | Drawing position `{"x", "y"}`. |
@@ -110,9 +112,26 @@ The flow graph is a JSON format for moving an EcoAnalyst network between program
 | `polarity` | no | `"positive"` (default) or `"negative"`. Stored and exported; the loss calculations do not use it. |
 | `weight`, `unit` | yes | The flow's maximum rate and its unit. On import these set `max_rate` and take precedence over `attrs.flow.max_rate`. |
 | `series_ref` | no | Same meaning as for actors. Written only when set. |
-| `attrs.flow` | no | `EdgeFlow`: `max_rate`, `min_rate`, `efficiency`, `direction`, `transport_time`, `waste_rate`. |
+| `attrs.flow` | no | `EdgeFlow`: `max_rate`, `min_rate`, `efficiency`, `efficiency_mode`, `direction`, `transport_time`, `waste_rate`. |
 | `attrs.constraints` | no | List of strings. |
 | `attrs.metadata` | no | Free-form object. |
+
+## Causal variables
+
+Each entry of `causal.variables` is one variable, listed parents first:
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `name` | yes | Identifier (`^[A-Za-z_][A-Za-z0-9_]*$`), unique in the graph. |
+| `kind` | no | `continuous` (default), `rate`, `positive`, or `binary`. |
+| `parents` | no | Names of earlier variables. |
+| `intercept`, `coefficients`, `noise_sd` | no | The equation on the kind's link scale. `coefficients` maps parent names to numbers. |
+| `observed` | no | `false` for a variable that exists but cannot be measured. Default `true`. |
+| `unit`, `description` | no | Free text. |
+| `binds` | no | `{"target": "node" \| "edge", "id", "field"}`: the network parameter this variable drives. |
+| `posterior` | no | Written by `fit()`: `family`, `terms`, `mean`, `scale`, `a`, `b`, `n_obs`. |
+
+Import fails if a binding points at an actor or flow that is not in the document.
 
 ## Round trip
 
