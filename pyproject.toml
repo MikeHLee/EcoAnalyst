@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecoanalyst"
+dynamic = ["version"]
+description = "Graph models of material, energy, and money flows with loss, routing, and cost analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["networks", "supply chain", "energy", "loss analysis", "graph"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "networkx>=3.2",
+    "numpy>=1.26",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "httpx>=0.26",
+]
+mcp = [
+    "mcp>=1.2",
+]
+viz = [
+    "matplotlib>=3.7",
+]
+bayes = [
+    "pymc>=5.7",
+    "arviz>=0.16",
+    "pandas>=2.0",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+]
+dev = [
+    "pytest>=8",
+    "httpx>=0.26",
+    "fastapi>=0.110",
+    "jsonschema>=4.18",
+]
+all = [
+    "ecoanalyst[api,mcp,viz,bayes]",
+]
+
+[project.scripts]
+ecoanalyst = "ecoanalyst.cli:main"
+ecoanalyst-mcp = "ecoanalyst.mcp_server:main"
+
+[project.urls]
+Homepage = "https://github.com/MikeHLee/ecoanalyst"
+Issues = "https://github.com/MikeHLee/ecoanalyst/issues"
+Changelog = "https://github.com/MikeHLee/ecoanalyst/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = { attr = "ecoanalyst._version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
