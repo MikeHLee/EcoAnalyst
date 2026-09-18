@@ -193,9 +193,9 @@ async def add_node(
     return {
         "success": True,
         "node_id": node_id,
-        "node_type": request.node_type.value,
+        "node_type": request.node_type,
         "name": request.name,
-        "message": f"Added {request.node_type.value} node: {request.name}",
+        "message": f"Added {request.node_type} node: {request.name}",
     }
 
 
@@ -267,7 +267,7 @@ async def add_edge(
     return {
         "success": True,
         "edge_id": edge_id,
-        "relationship_type": request.relationship_type.value,
+        "relationship_type": request.relationship_type,
         "message": "Edge added successfully",
     }
 

@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MikeHLee/ecoanalyst/blob/main/docs/flowgraph.schema.json",
+  "title": "EcoAnalyst flow graph, version 1",
+  "description": "Portable exchange format for EcoAnalyst networks. See docs/flow_graph_format.md.",
+  "type": "object",
+  "required": ["format", "version", "actors", "flows"],
+  "properties": {
+    "format": { "const": "ecoanalyst.flowgraph" },
+    "version": { "const": 1 },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "network_type": { "type": "string" },
+    "actors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/actor" }
+    },
+    "flows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/flow" }
+    }
+  },
+  "$defs": {
+    "kind": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "quantity": {
+      "type": "object",
+      "required": ["value", "unit"],
+      "properties": {
+        "value": { "type": "number" },
+        "unit": { "type": "string" }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "required": ["value"],
+      "properties": {
+        "value": { "type": "number" },
+        "currency": { "type": "string" }
+      }
+    },
+    "fraction": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "geometry": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string" }
+      }
+    },
+    "actor": {
+      "type": "object",
+      "required": ["id", "kind", "name"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "$ref": "#/$defs/kind" },
+        "name": { "type": "string" },
+        "class": { "type": "string" },
+        "geometry": { "$ref": "#/$defs/geometry" },
+        "series_ref": { "type": "string" },
+        "attrs": {
+          "type": "object",
+          "properties": {
+            "properties": {
+              "type": "object",
+              "properties": {
+                "capacity": { "$ref": "#/$defs/quantity" },
+                "efficiency": { "type": "number", "minimum": 0, "maximum": 1 },
+                "lifetime_years": { "type": "integer", "minimum": 1, "maximum": 100 },
+                "waste_rate": { "$ref": "#/$defs/fraction" },
+                "degradation_rate": { "$ref": "#/$defs/fraction" },
+                "count": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "financials": {
+              "type": "object",
+              "properties": {
+                "capex": { "$ref": "#/$defs/cost" },
+                "opex_annual": { "$ref": "#/$defs/cost" },
+                "installation": { "anyOf": [{ "$ref": "#/$defs/cost" }, { "type": "null" }] },
+                "waste_cost_per_unit": { "anyOf": [{ "$ref": "#/$defs/cost" }, { "type": "null" }] },
+                "salvage_value": { "anyOf": [{ "$ref": "#/$defs/cost" }, { "type": "null" }] }
+              }
+            },
+            "operations": { "type": "object" },
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": { "type": "number" },
+                "y": { "type": "number" }
+              }
+            },
+            "metadata": { "type": "object" }
+          }
+        }
+      }
+    },
+    "flow": {
+      "type": "object",
+      "required": ["id", "kind", "src", "tgt", "weight", "unit"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "$ref": "#/$defs/kind" },
+        "src": { "type": "string" },
+        "tgt": { "type": "string" },
+        "polarity": { "enum": ["positive", "negative"] },
+        "weight": { "type": "number" },
+        "unit": { "type": "string" },
+        "series_ref": { "type": "string" },
+        "attrs": {
+          "type": "object",
+          "properties": {
+            "flow": {
+              "type": "object",
+              "properties": {
+                "max_rate": { "$ref": "#/$defs/quantity" },
+                "min_rate": { "anyOf": [{ "$ref": "#/$defs/quantity" }, { "type": "null" }] },
+                "efficiency": { "type": "number", "minimum": 0, "maximum": 1 },
+                "direction": { "type": "string" },
+                "transport_time": { "anyOf": [{ "$ref": "#/$defs/quantity" }, { "type": "null" }] },
+                "waste_rate": { "$ref": "#/$defs/fraction" }
+              }
+            },
+            "constraints": { "type": "array", "items": { "type": "string" } },
+            "metadata": { "type": "object" }
+          }
+        }
+      }
+    }
+  }
+}

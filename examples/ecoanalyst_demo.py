@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
 """
-EcoAnalyst Demo - Comprehensive example using the new v2.0 API
+Example: a produce supply chain built with EcosystemNetwork.
 
-This example demonstrates:
-1. Creating an ecosystem network with typed nodes and edges
-2. Adding financial data for TCO analysis
-3. Calculating waste costs and identifying hotspots
-4. Finding optimal paths through the network
-5. Comparing scenarios for optimization
+The script adds typed nodes and edges with financial data, estimates loss
+costs, ranks hotspots, finds the minimum-loss route, follows 5000 kg along
+that route, and computes total cost of ownership. It writes the network to
+examples/output/demo_network.json.
 """
 
-import sys
 from pathlib import Path
-
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from ecoanalyst import (
     EcosystemNetwork,
@@ -112,7 +106,7 @@ def create_supply_chain_network():
     retailer_id = network.add_node(
         node_type=NodeType.CONSUMER,
         node_class="Retailer",
-        name="Whole Foods Market",
+        name="Neighborhood Market",
         properties={
             "capacity": {"value": 500, "unit": "kg/day"},
             "efficiency": 0.92,
@@ -216,7 +210,7 @@ def create_supply_chain_network():
 
 
 def analyze_network(network, node_ids):
-    """Perform comprehensive analysis on the network."""
+    """Print a summary, loss costs, hotspots, the best route, and TCO."""
     
     print("\n" + "=" * 70)
     print("NETWORK ANALYSIS")
@@ -304,6 +298,13 @@ def analyze_network(network, node_ids):
         print(f"\n    Breakdown:")
         for component, waste in breakdown.items():
             print(f"      - {component}: {waste:.1%}")
+
+        cascade = analysis.calculate_path_cost(
+            path, pricing_data=pricing, edge_kinds=["inventory"]
+        )
+        print(f"\n    Sending {cascade['input_quantity']:,.0f} {cascade['unit']} along this path:")
+        print(f"      Delivered: {cascade['delivered_quantity']:,.1f}")
+        print(f"      Lost: {cascade['total_waste']:,.1f} (${cascade['total_cost']:,.2f})")
     else:
         print("  No path found")
     
@@ -335,7 +336,9 @@ def main():
     print("SAVING NETWORK")
     print("=" * 70)
     
-    output_file = Path(__file__).parent / "demo_network.json"
+    output_dir = Path(__file__).parent / "output"
+    output_dir.mkdir(exist_ok=True)
+    output_file = output_dir / "demo_network.json"
     network.save_to_json(str(output_file))
     print(f"\n  ✓ Saved to: {output_file}")
     

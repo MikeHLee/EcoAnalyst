@@ -129,7 +129,7 @@
       "node_id": "cfe6fe29-5a38-4064-8bf6-da5317dd88d6",
       "node_type": "consumer",
       "node_class": "Retailer",
-      "name": "Whole Foods Market",
+      "name": "Neighborhood Market",
       "properties": {
         "capacity": {
           "value": 500.0,
