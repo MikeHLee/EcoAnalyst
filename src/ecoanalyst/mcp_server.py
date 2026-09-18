@@ -42,12 +42,19 @@ def create_network(
     name: str,
     network_type: str = "ecosystem",
     description: str = "",
+    efficiency_mode: str = "ignore",
 ) -> Dict[str, Any]:
     """Create an empty network.
 
     network_type is free text, for example supply_chain, energy, ecosystem, or economy.
+    efficiency_mode sets how node and edge efficiency values count: "ignore"
+    (stored only), "conversion" (a yield applied after waste), or "retention"
+    (efficiency is the fraction that gets through, so loss = 1 - efficiency).
     """
-    network = EcosystemNetwork(name=name, description=description, network_type=network_type)
+    network = EcosystemNetwork(
+        name=name, description=description, network_type=network_type,
+        efficiency_mode=efficiency_mode,
+    )
     NETWORKS[network.network_id] = network
     return {
         "network_id": network.network_id,
@@ -82,7 +89,8 @@ def add_node(
     capacity_value: float = 100.0,
     capacity_unit: str = "units/day",
     waste_rate: Optional[float] = None,
-    efficiency: float = 1.0,
+    efficiency: Optional[float] = None,
+    efficiency_mode: Optional[str] = None,
     count: int = 1,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -90,7 +98,8 @@ def add_node(
 
     node_type is a node kind: producer, processor, handler, consumer, service,
     grid, or a custom lowercase identifier. waste_rate is the fraction lost at
-    the node (0 to 1).
+    the node (0 to 1). efficiency_mode overrides the network default for this
+    node ("ignore", "conversion", or "retention").
     """
     network = _network(network_id)
     node_id = network.add_node(
@@ -101,6 +110,7 @@ def add_node(
             "capacity": {"value": capacity_value, "unit": capacity_unit},
             "waste_rate": waste_rate,
             "efficiency": efficiency,
+            "efficiency_mode": efficiency_mode,
             "count": count,
         },
         metadata=metadata,
@@ -119,18 +129,22 @@ def add_edge(
     transport_waste_rate: Optional[float] = None,
     transport_time_hours: Optional[float] = None,
     polarity: str = "positive",
+    efficiency: Optional[float] = None,
+    efficiency_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Connect two nodes with a directed flow.
 
     flow_type is a flow kind: inventory, energy, currency, information,
     service, waste, control, a 2.x name such as inventory_flow, or a custom
     lowercase identifier. transport_waste_rate is the fraction lost in
-    transit (0 to 1).
+    transit (0 to 1). efficiency and efficiency_mode work as for nodes.
     """
     network = _network(network_id)
     flow: Dict[str, Any] = {
         "max_rate": {"value": max_rate_value, "unit": max_rate_unit},
         "waste_rate": transport_waste_rate,
+        "efficiency": efficiency,
+        "efficiency_mode": efficiency_mode,
     }
     if transport_time_hours is not None:
         flow["transport_time"] = {"value": transport_time_hours, "unit": "hours"}

@@ -11,6 +11,12 @@
     "name": { "type": "string" },
     "description": { "type": "string" },
     "network_type": { "type": "string" },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "efficiency_mode": { "$ref": "#/$defs/efficiency_mode" }
+      }
+    },
     "actors": {
       "type": "array",
       "items": { "$ref": "#/$defs/actor" }
@@ -21,6 +27,7 @@
     }
   },
   "$defs": {
+    "efficiency_mode": { "enum": ["ignore", "conversion", "retention"] },
     "kind": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
@@ -70,7 +77,8 @@
               "type": "object",
               "properties": {
                 "capacity": { "$ref": "#/$defs/quantity" },
-                "efficiency": { "type": "number", "minimum": 0, "maximum": 1 },
+                "efficiency": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+                "efficiency_mode": { "anyOf": [{ "$ref": "#/$defs/efficiency_mode" }, { "type": "null" }] },
                 "lifetime_years": { "type": "integer", "minimum": 1, "maximum": 100 },
                 "waste_rate": { "$ref": "#/$defs/fraction" },
                 "degradation_rate": { "$ref": "#/$defs/fraction" },
@@ -120,7 +128,8 @@
               "properties": {
                 "max_rate": { "$ref": "#/$defs/quantity" },
                 "min_rate": { "anyOf": [{ "$ref": "#/$defs/quantity" }, { "type": "null" }] },
-                "efficiency": { "type": "number", "minimum": 0, "maximum": 1 },
+                "efficiency": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+                "efficiency_mode": { "anyOf": [{ "$ref": "#/$defs/efficiency_mode" }, { "type": "null" }] },
                 "direction": { "type": "string" },
                 "transport_time": { "anyOf": [{ "$ref": "#/$defs/quantity" }, { "type": "null" }] },
                 "waste_rate": { "$ref": "#/$defs/fraction" }

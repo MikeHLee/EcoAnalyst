@@ -92,6 +92,7 @@ def create_app(cors_origins: Optional[List[str]] = None) -> FastAPI:
             name=request.name,
             description=request.description or "",
             network_type=request.network_type,
+            efficiency_mode=request.efficiency_mode,
         )
         networks[network.network_id] = network
         return {
@@ -154,7 +155,7 @@ def create_app(cors_origins: Optional[List[str]] = None) -> FastAPI:
         network.name = request.name
         network.description = request.description or network.description
         network.network_type = request.network_type
-        network.updated_at = utc_now_iso()
+        network.set_efficiency_mode(request.efficiency_mode)
         return {"success": True, "network_id": network_id, "message": "Network updated"}
 
     @app.delete("/networks/{network_id}")

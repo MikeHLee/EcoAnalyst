@@ -52,6 +52,24 @@ def _normalize_kind(kind: Any, aliases: Dict[str, str], what: str) -> str:
     return kind
 
 
+EFFICIENCY_MODES = ("ignore", "conversion", "retention")
+EfficiencyMode = Literal["ignore", "conversion", "retention"]
+"""How a component's ``efficiency`` enters the loss calculations.
+
+- ``ignore``: ``efficiency`` is stored only. Loss comes from ``waste_rate``.
+- ``conversion``: ``efficiency`` is a yield or conversion ratio applied in
+  addition to ``waste_rate``: output = input x (1 - waste_rate) x efficiency.
+  Use it when the component turns one thing into another (wheat into flour,
+  sunlight into electricity) and also loses some of what it handles. The
+  conversion shortfall is reported separately and is not priced as waste.
+- ``retention``: ``efficiency`` is the fraction that gets through, so the
+  loss rate is 1 - efficiency. Use it when a data source reports efficiency
+  instead of loss. If ``waste_rate`` is also set, the two must agree.
+
+A network has a default mode; a node or edge can override it.
+"""
+
+
 def normalize_node_kind(kind: Any) -> str:
     """Return the normalized node kind for ``kind``.
 
@@ -156,12 +174,14 @@ class NodeProperties(BaseModel):
     """Physical properties of a node.
 
     ``capacity`` is per unit; ``count`` is the number of identical units.
-    ``waste_rate`` is the fraction of what passes through the node that is
-    lost. ``efficiency`` is stored but not used by the loss calculations.
+    ``waste_rate`` is the fraction of what reaches the node that it loses.
+    How ``efficiency`` is used depends on ``efficiency_mode``, or on the
+    network's default when that is None (see ``EFFICIENCY_MODES``).
     """
 
     capacity: Quantity
-    efficiency: float = Field(1.0, ge=0.0, le=1.0)
+    efficiency: Optional[float] = Field(None, ge=0.0, le=1.0)
+    efficiency_mode: Optional[EfficiencyMode] = None
     lifetime_years: int = Field(10, ge=1, le=100)
     waste_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
     degradation_rate: Optional[float] = Field(None, ge=0.0, le=1.0)  # per year
@@ -201,13 +221,15 @@ class NodeOperations(BaseModel):
 class EdgeFlow(BaseModel):
     """Flow properties of an edge.
 
-    ``waste_rate`` is the fraction lost in transit. ``efficiency`` is stored
-    but not used by the loss calculations.
+    ``waste_rate`` is the fraction lost in transit. How ``efficiency`` is
+    used depends on ``efficiency_mode``, or on the network's default when
+    that is None (see ``EFFICIENCY_MODES``).
     """
 
     max_rate: Quantity
     min_rate: Optional[Quantity] = None
-    efficiency: float = Field(1.0, ge=0.0, le=1.0)
+    efficiency: Optional[float] = Field(None, ge=0.0, le=1.0)
+    efficiency_mode: Optional[EfficiencyMode] = None
     direction: str = "unidirectional"  # or "bidirectional"
     transport_time: Optional[Quantity] = None
     waste_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
@@ -318,6 +340,7 @@ class CreateNetworkRequest(BaseModel):
     name: str
     description: Optional[str] = None
     network_type: str = "ecosystem"  # "supply_chain", "energy", "ecosystem", "economy", ...
+    efficiency_mode: EfficiencyMode = "ignore"
 
 
 class AddNodeRequest(BaseModel):

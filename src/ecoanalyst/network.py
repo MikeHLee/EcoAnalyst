@@ -7,6 +7,9 @@ different kinds (for example goods one way and payment the other).
 
 Loss rates compound along a path. If a path passes components that lose
 fractions w_1 ... w_n, the fraction lost end to end is 1 - prod(1 - w_i).
+Components can also convert what passes through them (see
+``models.EFFICIENCY_MODES``); each component then passes on
+c_i x (1 - w_i) of what reaches it.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import json
 import math
 import uuid
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -26,6 +30,7 @@ from .models import (
     EdgeFlow,
     NodeFinancials,
     NodeOperations,
+    EFFICIENCY_MODES,
     NodeProperties,
     RelationshipType,
     normalize_edge_kind,
@@ -50,14 +55,72 @@ def compound_loss(rates: Iterable[Optional[float]]) -> float:
     return 1.0 - retained
 
 
-def _retention_weight(*rates: Optional[float]) -> Optional[float]:
-    """-log of the retained fraction, or None if any rate is 1 (nothing passes)."""
+RETENTION_TOLERANCE = 1e-6
+
+
+@dataclass(frozen=True)
+class Transfer:
+    """What one node or edge does to the quantity that reaches it.
+
+    It loses ``waste_rate`` of its input as waste, then passes on
+    ``conversion`` of the remainder; the rest of the remainder is the
+    conversion shortfall. ``conversion`` is 1 unless the component uses the
+    ``conversion`` efficiency mode.
+    """
+
+    waste_rate: float = 0.0
+    conversion: float = 1.0
+
+    @property
+    def retained(self) -> float:
+        """Fraction of the input that the component passes on."""
+        return (1.0 - self.waste_rate) * self.conversion
+
+
+def resolve_transfer(params: Any, default_mode: str = "ignore", label: str = "component") -> Transfer:
+    """Turn a NodeProperties or EdgeFlow into a Transfer.
+
+    The component's ``efficiency_mode`` wins over ``default_mode``. A missing
+    ``efficiency`` means "no conversion" in conversion mode and "use
+    waste_rate" in retention mode.
+
+    Raises:
+        ValueError: in retention mode when ``efficiency`` and ``waste_rate``
+            are both set and disagree
+    """
+    mode = getattr(params, "efficiency_mode", None) or default_mode
+    waste = params.waste_rate or 0.0
+    efficiency = params.efficiency
+    if mode == "ignore" or efficiency is None:
+        return Transfer(waste, 1.0)
+    if mode == "conversion":
+        return Transfer(waste, efficiency)
+    if mode == "retention":
+        implied = 1.0 - efficiency
+        if params.waste_rate is not None and abs(implied - params.waste_rate) > RETENTION_TOLERANCE:
+            raise ValueError(
+                f"{label}: in retention mode efficiency {efficiency} implies a loss rate of "
+                f"{implied:.6g}, but waste_rate is {params.waste_rate}. Remove one of them, "
+                "make them agree, or use another efficiency_mode."
+            )
+        return Transfer(implied, 1.0)
+    raise ValueError(f"{label}: unknown efficiency_mode {mode!r}; use one of {EFFICIENCY_MODES}")
+
+
+def _check_mode(mode: str) -> str:
+    if mode not in EFFICIENCY_MODES:
+        raise ValueError(f"efficiency_mode must be one of {EFFICIENCY_MODES}, got {mode!r}")
+    return mode
+
+
+def _retention_weight(*transfers: Transfer) -> Optional[float]:
+    """-log of the fraction passed on, or None if nothing passes."""
     weight = 0.0
-    for rate in rates:
-        rate = rate or 0.0
-        if rate >= 1.0:
+    for transfer in transfers:
+        retained = transfer.retained
+        if retained <= 0.0:
             return None
-        weight -= math.log1p(-rate)
+        weight -= math.log(retained)
     return weight
 
 
@@ -89,11 +152,13 @@ class EcosystemNetwork:
         name: str = "Unnamed Network",
         description: str = "",
         network_type: str = "ecosystem",
+        efficiency_mode: str = "ignore",
     ):
         self.network_id = str(uuid.uuid4())
         self.name = name
         self.description = description
         self.network_type = network_type
+        self.efficiency_mode = _check_mode(efficiency_mode)
         self.created_at = utc_now_iso()
         self.updated_at = self.created_at
 
@@ -324,6 +389,62 @@ class EcosystemNetwork:
             if kinds is None or attrs["edge"].relationship_type in kinds
         ]
 
+    def set_efficiency_mode(self, mode: str) -> None:
+        """Set the default efficiency mode for nodes and edges that do not set their own."""
+        self.efficiency_mode = _check_mode(mode)
+        self.updated_at = utc_now_iso()
+
+    def node_transfer(self, node_id: str) -> Transfer:
+        """The Transfer of a node under the network's efficiency settings."""
+        node = self._require_node(node_id)
+        return resolve_transfer(node.properties, self.efficiency_mode, f"node {node.name!r}")
+
+    def edge_transfer(self, edge: EcosystemEdge) -> Transfer:
+        """The Transfer of an edge under the network's efficiency settings."""
+        return resolve_transfer(
+            edge.flow, self.efficiency_mode,
+            f"edge {edge.source_node_id}->{edge.target_node_id}",
+        )
+
+    def check_loss_config(self) -> List[Dict[str, str]]:
+        """Report efficiency settings that raise errors or may double count.
+
+        Returns a list of ``{"level", "component", "message"}`` items:
+        ``error`` for a retention-mode component whose efficiency and
+        waste_rate disagree, and ``warning`` for a conversion-mode component
+        whose efficiency equals 1 - waste_rate, which usually means both
+        fields describe the same loss.
+        """
+        issues: List[Dict[str, str]] = []
+        components = [
+            (f"node {n.name!r}", n.properties) for n in self.nodes.values()
+        ] + [
+            (f"edge {e.source_node_id}->{e.target_node_id}", e.flow) for e in self.edges.values()
+        ]
+        for label, params in components:
+            mode = params.efficiency_mode or self.efficiency_mode
+            try:
+                resolve_transfer(params, self.efficiency_mode, label)
+            except ValueError as exc:
+                issues.append({"level": "error", "component": label, "message": str(exc)})
+                continue
+            if (
+                mode == "conversion"
+                and params.efficiency is not None
+                and params.waste_rate
+                and abs((1.0 - params.efficiency) - params.waste_rate) <= RETENTION_TOLERANCE
+            ):
+                issues.append({
+                    "level": "warning",
+                    "component": label,
+                    "message": (
+                        f"efficiency {params.efficiency} equals 1 - waste_rate; conversion mode "
+                        "applies both, so this loss is counted twice. Use retention mode for "
+                        "this component if both fields describe the same loss."
+                    ),
+                })
+        return issues
+
     def select_path_edges(
         self,
         path: List[str],
@@ -332,9 +453,9 @@ class EcosystemNetwork:
         """
         Pick the edge used between each pair of consecutive nodes in ``path``.
 
-        When several eligible edges join the same pair, the one with the
-        lowest loss rate is used. ``edge_kinds`` restricts the choice to the
-        given flow kinds.
+        When several eligible edges join the same pair, the one that passes on
+        the largest fraction is used (the lowest loss rate, unless conversion
+        applies). ``edge_kinds`` restricts the choice to the given flow kinds.
 
         Raises:
             ValueError: if a node is unknown or a pair has no eligible edge
@@ -348,8 +469,78 @@ class EcosystemNetwork:
             if not candidates:
                 detail = f" of kind {sorted(kinds)}" if kinds else ""
                 raise ValueError(f"No edge{detail} from {source_id} to {target_id}")
-            chosen.append(min(candidates, key=lambda e: e.flow.waste_rate or 0.0))
+            chosen.append(max(candidates, key=lambda e: self.edge_transfer(e).retained))
         return chosen
+
+    def _path_components(
+        self,
+        path: List[str],
+        edge_kinds: Optional[Iterable[Any]] = None,
+        include_nodes: bool = True,
+        include_edges: bool = True,
+    ) -> List[Tuple[str, str, str, Transfer]]:
+        """(type, id, breakdown key, Transfer) for each component in path order."""
+        edges = self.select_path_edges(path, edge_kinds) if include_edges else []
+        if not include_edges:
+            for node_id in path:
+                self._require_node(node_id)
+        components: List[Tuple[str, str, str, Transfer]] = []
+        for i, node_id in enumerate(path):
+            if include_nodes:
+                components.append(("node", node_id, f"node:{node_id}", self.node_transfer(node_id)))
+            if i < len(edges):
+                edge = edges[i]
+                key = f"edge:{edge.source_node_id}->{edge.target_node_id}"
+                components.append(("edge", edge.edge_id, key, self.edge_transfer(edge)))
+        return components
+
+    def calculate_path_transfer(
+        self,
+        path: List[str],
+        edge_kinds: Optional[Iterable[Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Follow one unit of input along a path.
+
+        Each component loses ``waste_rate`` of what reaches it and then
+        passes on ``conversion`` of the rest (see ``Transfer``).
+
+        Returns:
+            Dict with ``delivered_fraction``, ``waste_fraction``,
+            ``conversion_fraction`` (these three sum to 1) and ``components``,
+            one entry per node and edge with its rates and the fraction of
+            the original input it wastes and converts.
+
+        Raises:
+            ValueError: if a node is unknown, a pair has no eligible edge, or
+                a component's efficiency settings conflict
+        """
+        current = 1.0
+        waste = converted = 0.0
+        rows = []
+        for ctype, cid, _, transfer in self._path_components(path, edge_kinds):
+            lost = current * transfer.waste_rate
+            after_waste = current - lost
+            shortfall = after_waste * (1.0 - transfer.conversion)
+            rows.append({
+                "type": ctype,
+                "id": cid,
+                "input_fraction": current,
+                "waste_rate": transfer.waste_rate,
+                "conversion": transfer.conversion,
+                "waste_fraction": lost,
+                "conversion_fraction": shortfall,
+            })
+            waste += lost
+            converted += shortfall
+            current = after_waste - shortfall
+        return {
+            "path": list(path),
+            "delivered_fraction": current,
+            "waste_fraction": waste,
+            "conversion_fraction": converted,
+            "components": rows,
+        }
 
     def calculate_path_waste(
         self,
@@ -359,11 +550,14 @@ class EcosystemNetwork:
         edge_kinds: Optional[Iterable[Any]] = None,
     ) -> Tuple[float, Dict[str, float]]:
         """
-        Calculate the fraction lost along a path.
+        Calculate the fraction of the input lost as waste along a path.
 
-        Losses compound: total = 1 - prod(1 - w_i) over the included node and
-        edge loss rates. Between consecutive nodes the lowest-loss eligible
-        edge is used (see ``select_path_edges``).
+        Losses compound: with no conversion, total = 1 - prod(1 - w_i) over
+        the included node and edge loss rates. When components convert what
+        they pass on, each loss applies to what actually reaches it, and the
+        conversion shortfall is not counted as waste (see
+        ``calculate_path_transfer``). Between consecutive nodes the eligible
+        edge that passes on the most is used (see ``select_path_edges``).
 
         Args:
             path: Node IDs in order
@@ -372,47 +566,41 @@ class EcosystemNetwork:
             edge_kinds: Optional flow kinds the path may use
 
         Returns:
-            Tuple of (total loss fraction, loss rate by component). Keys are
-            "node:<id>" and "edge:<source>-><target>"; components with no
-            loss are left out.
+            Tuple of (waste fraction of the input, effective loss rate by
+            component). Keys are "node:<id>" and "edge:<source>-><target>";
+            components with no loss are left out.
 
         Raises:
-            ValueError: if a node is unknown or a pair has no eligible edge
+            ValueError: if a node is unknown, a pair has no eligible edge, or
+                a component's efficiency settings conflict
         """
-        rates: List[float] = []
+        current = 1.0
+        waste = 0.0
         breakdown: Dict[str, float] = {}
-
-        edges = self.select_path_edges(path, edge_kinds) if include_edges else []
-
-        if include_nodes:
-            for node_id in path:
-                rate = self.nodes[node_id].properties.waste_rate
-                if rate:
-                    rates.append(rate)
-                    breakdown[f"node:{node_id}"] = rate
-
-        for edge in edges:
-            rate = edge.flow.waste_rate
-            if rate:
-                rates.append(rate)
-                breakdown[f"edge:{edge.source_node_id}->{edge.target_node_id}"] = rate
-
-        return compound_loss(rates), breakdown
+        for _, _, key, transfer in self._path_components(path, edge_kinds, include_nodes, include_edges):
+            if transfer.waste_rate:
+                breakdown[key] = transfer.waste_rate
+            lost = current * transfer.waste_rate
+            waste += lost
+            current = (current - lost) * transfer.conversion
+        return waste, breakdown
 
     def _routing_graph(self, kinds: Optional[frozenset]) -> nx.DiGraph:
-        """DiGraph with one edge per node pair, weighted by -log(retained fraction).
+        """DiGraph with one edge per node pair, weighted by -log(fraction passed on).
 
-        The weight of u->v is -log(1 - w_edge) - log(1 - w_u). Summed along a
-        path this equals -log of the fraction retained by every node except
-        the last, which is the same for all paths to a given target.
+        The weight of u->v is -log(r_edge) - log(r_u), where r = (1 - w) x c
+        is what a component passes on. Summed along a path this equals -log of
+        the fraction passed on by every component except the last node, which
+        is the same for all paths to a given target.
         """
         G = nx.DiGraph()
         G.add_nodes_from(self.nodes)
         for edge in self.edges.values():
             if kinds is not None and edge.relationship_type not in kinds:
                 continue
-            source = self.nodes[edge.source_node_id]
-            weight = _retention_weight(edge.flow.waste_rate, source.properties.waste_rate)
+            weight = _retention_weight(
+                self.edge_transfer(edge), self.node_transfer(edge.source_node_id)
+            )
             if weight is None:
                 continue
             u, v = edge.source_node_id, edge.target_node_id
@@ -430,10 +618,12 @@ class EcosystemNetwork:
         """
         Find the path that delivers the largest fraction from source to target.
 
-        Each edge is weighted by -log(1 - w_edge) - log(1 - w_source_node),
-        so the shortest path maximizes the retained fraction. An edge, or an
-        edge leaving a node, whose loss rate is 1 carries nothing and is
-        skipped.
+        Each edge is weighted by -log(r_edge) - log(r_source_node), where r is
+        the fraction a component passes on, so the shortest path maximizes
+        the delivered fraction. With no conversion this is also the path with
+        the least waste. An edge, or an edge leaving a node, that passes on
+        nothing is skipped. The returned total is the waste fraction; use
+        ``calculate_path_transfer`` for the delivered fraction.
 
         Args:
             source_id: Starting node ID
@@ -467,10 +657,11 @@ class EcosystemNetwork:
         edge_kinds: Optional[Iterable[Any]] = None,
     ) -> List[Tuple[List[str], float]]:
         """
-        List up to ``max_paths`` simple paths, lowest compounded loss first.
+        List up to ``max_paths`` simple paths, largest delivered fraction first.
 
-        Paths that cross an edge or leave a node with a loss rate of 1 are
-        left out, because nothing arrives through them.
+        With no conversion this is also lowest compounded loss first. Each
+        entry is (path, waste fraction). Paths through a component that
+        passes on nothing are left out.
 
         Raises:
             ValueError: if source or target is unknown
@@ -505,6 +696,7 @@ class EcosystemNetwork:
             "name": self.name,
             "description": self.description,
             "network_type": self.network_type,
+            "efficiency_mode": self.efficiency_mode,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "nodes": [node.to_dict() for node in self.nodes.values()],

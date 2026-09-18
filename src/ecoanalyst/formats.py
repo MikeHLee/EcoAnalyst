@@ -95,6 +95,7 @@ def from_native(data: Dict[str, Any], cls=None) -> "EcosystemNetwork":
         name=data.get("name", "Loaded Network"),
         description=data.get("description", ""),
         network_type=data.get("network_type", "ecosystem"),
+        efficiency_mode=data.get("efficiency_mode") or "ignore",
     )
     network.network_id = data.get("network_id", network.network_id)
     network.created_at = data.get("created_at", network.created_at)
@@ -210,6 +211,7 @@ def to_flow_graph(network: "EcosystemNetwork") -> Dict[str, Any]:
         "name": network.name,
         "description": network.description,
         "network_type": network.network_type,
+        "settings": {"efficiency_mode": network.efficiency_mode},
         "actors": actors,
         "flows": flows,
     }
@@ -233,10 +235,12 @@ def from_flow_graph(data: Dict[str, Any], cls=None) -> "EcosystemNetwork":
     if version != FLOW_GRAPH_VERSION:
         raise ValueError(f"unsupported flow-graph version: {version!r}")
 
+    settings = data.get("settings") or {}
     network = _network_class(cls)(
         name=data.get("name", "Imported flow graph"),
         description=data.get("description", ""),
         network_type=data.get("network_type", "ecosystem"),
+        efficiency_mode=settings.get("efficiency_mode") or "ignore",
     )
 
     for actor in data.get("actors", []):

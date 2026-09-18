@@ -9,6 +9,10 @@ Two kinds of loss estimate are available:
   follow material from one component to the next.
 - ``calculate_path_cost`` follows a quantity along one path and removes each
   component's loss from what actually arrives there.
+
+Loss rates are the effective rates under the network's efficiency settings
+(``EcosystemNetwork.node_transfer`` / ``edge_transfer``). A conversion
+shortfall is reported but not priced as waste.
 """
 
 from __future__ import annotations
@@ -56,11 +60,11 @@ class EconomicAnalysis:
         breakdown: Dict[str, Dict[str, Any]] = {"nodes": {}, "edges": {}}
 
         for node_id, node in self.network.nodes.items():
-            if not node.properties.waste_rate:
+            waste_rate = self.network.node_transfer(node_id).waste_rate
+            if not waste_rate:
                 continue
 
             throughput = node.properties.capacity.value * node.properties.count
-            waste_rate = node.properties.waste_rate
             waste_quantity = throughput * waste_rate
             product_price = pricing_data.get(node.node_class, default_price)
             node_waste_cost = waste_quantity * product_price
@@ -77,10 +81,11 @@ class EconomicAnalysis:
             total_waste_cost += node_waste_cost
 
         for edge_id, edge in self.network.edges.items():
-            if not edge.flow.waste_rate:
+            edge_rate = self.network.edge_transfer(edge).waste_rate
+            if not edge_rate:
                 continue
 
-            transport_waste = edge.flow.max_rate.value * edge.flow.waste_rate
+            transport_waste = edge.flow.max_rate.value * edge_rate
             source_node = self.network.get_node(edge.source_node_id)
             if source_node:
                 product_price = pricing_data.get(source_node.node_class, default_price)
@@ -92,7 +97,7 @@ class EconomicAnalysis:
                 "source": edge.source_node_id,
                 "target": edge.target_node_id,
                 "kind": edge.relationship_type,
-                "waste_rate": edge.flow.waste_rate,
+                "waste_rate": edge_rate,
                 "waste_quantity": transport_waste,
                 "waste_cost": edge_waste_cost,
                 "unit": edge.flow.max_rate.unit,
@@ -123,9 +128,11 @@ class EconomicAnalysis:
         Starting from ``input_quantity`` (default: the first node's capacity
         x count), each component in order (node, edge to the next node,
         next node, ...) removes ``current x waste_rate`` from what reaches
-        it. Node losses are priced by the node's class, edge losses by the
-        source node's class. Between consecutive nodes the lowest-loss
-        eligible edge is used.
+        it. A component in conversion mode then passes on ``efficiency`` of
+        the remainder; the shortfall is reported as ``converted`` and is not
+        priced. Node losses are priced by the node's class, edge losses by
+        the source node's class. Between consecutive nodes the eligible edge
+        that passes on the most is used.
 
         Args:
             path: Node IDs in order
@@ -136,7 +143,8 @@ class EconomicAnalysis:
 
         Returns:
             Dict with input_quantity, delivered_quantity, total_waste,
-            total_cost, and a breakdown of the components that lose anything
+            total_converted, total_cost, and a breakdown of the components
+            that lose or convert anything
 
         Raises:
             ValueError: on an empty path, an unknown node, or a missing edge
@@ -152,52 +160,45 @@ class EconomicAnalysis:
         current = float(input_quantity)
 
         total_cost = 0.0
+        total_converted = 0.0
         breakdown: List[Dict[str, Any]] = []
+
+        def step(entry: Dict[str, Any], transfer, price: float) -> None:
+            nonlocal current, total_cost, total_converted
+            lost = current * transfer.waste_rate
+            shortfall = (current - lost) * (1.0 - transfer.conversion)
+            if lost or shortfall:
+                cost = lost * price
+                entry.update({
+                    "input": current,
+                    "waste_rate": transfer.waste_rate,
+                    "waste": lost,
+                    "cost": cost,
+                })
+                if transfer.conversion != 1.0:
+                    entry.update({"conversion": transfer.conversion, "converted": shortfall})
+                breakdown.append(entry)
+                total_cost += cost
+                total_converted += shortfall
+            current = current - lost - shortfall
 
         for i, node_id in enumerate(path):
             node = self.network.nodes[node_id]
             price = pricing_data.get(node.node_class, default_price)
-
-            rate = node.properties.waste_rate or 0.0
-            if rate:
-                lost = current * rate
-                cost = lost * price
-                breakdown.append({
-                    "type": "node",
-                    "id": node_id,
-                    "name": node.name,
-                    "input": current,
-                    "waste_rate": rate,
-                    "waste": lost,
-                    "cost": cost,
-                })
-                current -= lost
-                total_cost += cost
-
+            step({"type": "node", "id": node_id, "name": node.name},
+                 self.network.node_transfer(node_id), price)
             if i < len(edges):
                 edge = edges[i]
-                rate = edge.flow.waste_rate or 0.0
-                if rate:
-                    lost = current * rate
-                    cost = lost * price
-                    breakdown.append({
-                        "type": "edge",
-                        "id": edge.edge_id,
-                        "source": edge.source_node_id,
-                        "target": edge.target_node_id,
-                        "input": current,
-                        "waste_rate": rate,
-                        "waste": lost,
-                        "cost": cost,
-                    })
-                    current -= lost
-                    total_cost += cost
+                step({"type": "edge", "id": edge.edge_id,
+                      "source": edge.source_node_id, "target": edge.target_node_id},
+                     self.network.edge_transfer(edge), price)
 
         return {
             "path": list(path),
             "input_quantity": float(input_quantity),
             "delivered_quantity": current,
-            "total_waste": float(input_quantity) - current,
+            "total_waste": float(input_quantity) - current - total_converted,
+            "total_converted": total_converted,
             "total_cost": total_cost,
             "unit": first.properties.capacity.unit,
             "breakdown": breakdown,
@@ -320,9 +321,9 @@ class EconomicAnalysis:
         hotspots = []
 
         for node_id, node in self.network.nodes.items():
-            if not node.properties.waste_rate:
+            waste_rate = self.network.node_transfer(node_id).waste_rate
+            if not waste_rate:
                 continue
-            waste_rate = node.properties.waste_rate
             hotspots.append({
                 "type": "node",
                 "id": node_id,
@@ -334,11 +335,11 @@ class EconomicAnalysis:
             })
 
         for edge_id, edge in self.network.edges.items():
-            if not edge.flow.waste_rate:
+            waste_rate = self.network.edge_transfer(edge).waste_rate
+            if not waste_rate:
                 continue
             source_node = self.network.get_node(edge.source_node_id)
             target_node = self.network.get_node(edge.target_node_id)
-            waste_rate = edge.flow.waste_rate
             hotspots.append({
                 "type": "edge",
                 "id": edge_id,
