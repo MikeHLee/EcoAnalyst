@@ -1,57 +1,74 @@
 """
-analysis.py: Economic and waste analysis for EcoAnalyst networks.
+analysis.py: Loss and cost analysis for EcoAnalyst networks.
 
-Provides tools for calculating waste costs, comparing scenarios,
-and performing economic impact assessments.
+Two kinds of loss estimate are available:
+
+- ``calculate_waste_cost`` and ``identify_hotspots`` look at each component
+  on its own: loss = capacity (or edge max rate) x loss rate. This is quick
+  and useful for ranking, but it is not a mass balance, because it does not
+  follow material from one component to the next.
+- ``calculate_path_cost`` follows a quantity along one path and removes each
+  component's loss from what actually arrives there.
+
+Loss rates are the effective rates under the network's efficiency settings
+(``EcosystemNetwork.node_transfer`` / ``edge_transfer``). A conversion
+shortfall is reported but not priced as waste.
 """
 
-from typing import Dict, Any, Optional, List
+from __future__ import annotations
+
+from typing import Any, Dict, Iterable, List, Optional
+
 from .network import EcosystemNetwork
-from .models import EcosystemNode, EcosystemEdge
+
+HOTSPOT_METRICS = ("waste_rate", "waste_quantity")
 
 
 class EconomicAnalysis:
-    """Economic analysis tools for ecosystem networks."""
-    
+    """Loss, cost, and total-cost-of-ownership calculations for one network."""
+
     def __init__(self, network: EcosystemNetwork):
         self.network = network
-    
+
     def calculate_waste_cost(
         self,
         pricing_data: Optional[Dict[str, float]] = None,
-        default_price: float = 1.0
+        default_price: float = 1.0,
     ) -> Dict[str, Any]:
         """
-        Calculate economic impact of waste in the network.
-        
+        Capacity-based estimate of loss quantity and cost across the network.
+
+        Each node loses capacity x count x waste_rate and each edge loses
+        max_rate x waste_rate, priced by the node class (edges use the
+        source node's class). Each component is assumed to run at full
+        capacity and is treated on its own, so the totals are an estimate
+        for ranking and comparison, not a mass balance. Use
+        ``calculate_path_cost`` to follow a quantity along a path.
+
         Args:
-            pricing_data: Map of node_class -> price_per_unit
-            default_price: Default price if node_class not in pricing_data
-            
+            pricing_data: Map of node_class -> price per unit
+            default_price: Price for classes not in pricing_data
+
         Returns:
-            Dict with total_waste_cost, breakdown by node/edge, and currency
+            Dict with total_waste_quantity, total_waste_cost, breakdown by
+            node and edge, and currency
         """
-        if pricing_data is None:
-            pricing_data = {}
-        
+        pricing_data = pricing_data or {}
+
         total_waste_cost = 0.0
         total_waste_quantity = 0.0
-        breakdown = {"nodes": {}, "edges": {}}
-        
-        # Calculate node waste
+        breakdown: Dict[str, Dict[str, Any]] = {"nodes": {}, "edges": {}}
+
         for node_id, node in self.network.nodes.items():
-            if not node.properties.waste_rate:
+            waste_rate = self.network.node_transfer(node_id).waste_rate
+            if not waste_rate:
                 continue
-            
-            # Calculate throughput
+
             throughput = node.properties.capacity.value * node.properties.count
-            waste_rate = node.properties.waste_rate
             waste_quantity = throughput * waste_rate
-            
-            # Get price
             product_price = pricing_data.get(node.node_class, default_price)
             node_waste_cost = waste_quantity * product_price
-            
+
             breakdown["nodes"][node_id] = {
                 "name": node.name,
                 "node_class": node.node_class,
@@ -60,39 +77,34 @@ class EconomicAnalysis:
                 "waste_cost": node_waste_cost,
                 "unit": node.properties.capacity.unit,
             }
-            
             total_waste_quantity += waste_quantity
             total_waste_cost += node_waste_cost
-        
-        # Calculate edge waste
+
         for edge_id, edge in self.network.edges.items():
-            if not edge.flow.waste_rate:
+            edge_rate = self.network.edge_transfer(edge).waste_rate
+            if not edge_rate:
                 continue
-            
-            flow_rate = edge.flow.max_rate.value
-            transport_waste = flow_rate * edge.flow.waste_rate
-            
-            # Get source node for pricing
+
+            transport_waste = edge.flow.max_rate.value * edge_rate
             source_node = self.network.get_node(edge.source_node_id)
             if source_node:
                 product_price = pricing_data.get(source_node.node_class, default_price)
             else:
                 product_price = default_price
-            
             edge_waste_cost = transport_waste * product_price
-            
+
             breakdown["edges"][edge_id] = {
                 "source": edge.source_node_id,
                 "target": edge.target_node_id,
-                "waste_rate": edge.flow.waste_rate,
+                "kind": edge.relationship_type,
+                "waste_rate": edge_rate,
                 "waste_quantity": transport_waste,
                 "waste_cost": edge_waste_cost,
                 "unit": edge.flow.max_rate.unit,
             }
-            
             total_waste_quantity += transport_waste
             total_waste_cost += edge_waste_cost
-        
+
         return {
             "total_waste_quantity": total_waste_quantity,
             "total_waste_cost": total_waste_cost,
@@ -101,105 +113,123 @@ class EconomicAnalysis:
             "node_count": len(breakdown["nodes"]),
             "edge_count": len(breakdown["edges"]),
         }
-    
+
     def calculate_path_cost(
         self,
         path: List[str],
         pricing_data: Optional[Dict[str, float]] = None,
-        default_price: float = 1.0
+        default_price: float = 1.0,
+        input_quantity: Optional[float] = None,
+        edge_kinds: Optional[Iterable[Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Calculate waste cost along a specific path.
-        
+        Follow a quantity along a path and price what each component loses.
+
+        Starting from ``input_quantity`` (default: the first node's capacity
+        x count), each component in order (node, edge to the next node,
+        next node, ...) removes ``current x waste_rate`` from what reaches
+        it. A component in conversion mode then passes on ``efficiency`` of
+        the remainder; the shortfall is reported as ``converted`` and is not
+        priced. Node losses are priced by the node's class, edge losses by
+        the source node's class. Between consecutive nodes the eligible edge
+        that passes on the most is used.
+
         Args:
-            path: List of node IDs
-            pricing_data: Map of node_class -> price_per_unit
-            default_price: Default price if not found
-            
+            path: Node IDs in order
+            pricing_data: Map of node_class -> price per unit
+            default_price: Price for classes not in pricing_data
+            input_quantity: Quantity entering the first node
+            edge_kinds: Optional flow kinds the path may use
+
         Returns:
-            Dict with path waste cost details
+            Dict with input_quantity, delivered_quantity, total_waste,
+            total_converted, total_cost, and a breakdown of the components
+            that lose or convert anything
+
+        Raises:
+            ValueError: on an empty path, an unknown node, or a missing edge
         """
-        if pricing_data is None:
-            pricing_data = {}
-        
+        if not path:
+            raise ValueError("path must contain at least one node")
+        pricing_data = pricing_data or {}
+
+        edges = self.network.select_path_edges(path, edge_kinds)
+        first = self.network.nodes[path[0]]
+        if input_quantity is None:
+            input_quantity = first.properties.capacity.value * first.properties.count
+        current = float(input_quantity)
+
         total_cost = 0.0
-        breakdown = []
-        
-        for i, node_id in enumerate(path):
-            node = self.network.get_node(node_id)
-            if not node:
-                continue
-            
-            # Node waste cost
-            if node.properties.waste_rate:
-                throughput = node.properties.capacity.value
-                waste = throughput * node.properties.waste_rate
-                price = pricing_data.get(node.node_class, default_price)
-                cost = waste * price
-                total_cost += cost
-                breakdown.append({
-                    "type": "node",
-                    "id": node_id,
-                    "name": node.name,
-                    "waste": waste,
+        total_converted = 0.0
+        breakdown: List[Dict[str, Any]] = []
+
+        def step(entry: Dict[str, Any], transfer, price: float) -> None:
+            nonlocal current, total_cost, total_converted
+            lost = current * transfer.waste_rate
+            shortfall = (current - lost) * (1.0 - transfer.conversion)
+            if lost or shortfall:
+                cost = lost * price
+                entry.update({
+                    "input": current,
+                    "waste_rate": transfer.waste_rate,
+                    "waste": lost,
                     "cost": cost,
                 })
-            
-            # Edge waste cost to next node
-            if i < len(path) - 1:
-                next_id = path[i + 1]
-                for edge in self.network.edges.values():
-                    if edge.source_node_id == node_id and edge.target_node_id == next_id:
-                        if edge.flow.waste_rate:
-                            flow = edge.flow.max_rate.value
-                            waste = flow * edge.flow.waste_rate
-                            price = pricing_data.get(node.node_class, default_price)
-                            cost = waste * price
-                            total_cost += cost
-                            breakdown.append({
-                                "type": "edge",
-                                "source": node_id,
-                                "target": next_id,
-                                "waste": waste,
-                                "cost": cost,
-                            })
-                        break
-        
+                if transfer.conversion != 1.0:
+                    entry.update({"conversion": transfer.conversion, "converted": shortfall})
+                breakdown.append(entry)
+                total_cost += cost
+                total_converted += shortfall
+            current = current - lost - shortfall
+
+        for i, node_id in enumerate(path):
+            node = self.network.nodes[node_id]
+            price = pricing_data.get(node.node_class, default_price)
+            step({"type": "node", "id": node_id, "name": node.name},
+                 self.network.node_transfer(node_id), price)
+            if i < len(edges):
+                edge = edges[i]
+                step({"type": "edge", "id": edge.edge_id,
+                      "source": edge.source_node_id, "target": edge.target_node_id},
+                     self.network.edge_transfer(edge), price)
+
         return {
-            "path": path,
+            "path": list(path),
+            "input_quantity": float(input_quantity),
+            "delivered_quantity": current,
+            "total_waste": float(input_quantity) - current - total_converted,
+            "total_converted": total_converted,
             "total_cost": total_cost,
+            "unit": first.properties.capacity.unit,
             "breakdown": breakdown,
             "currency": "USD",
         }
-    
+
     def compare_scenarios(
         self,
         baseline: EcosystemNetwork,
         optimized: EcosystemNetwork,
-        pricing_data: Optional[Dict[str, float]] = None
+        pricing_data: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
         """
-        Compare two network scenarios.
-        
+        Compare the capacity-based loss cost of two networks.
+
         Args:
             baseline: Original network
             optimized: Modified network
-            pricing_data: Pricing for waste calculation
-            
+            pricing_data: Pricing for the loss calculation
+
         Returns:
-            Comparison with savings analysis
+            Costs, savings, and loss reduction
         """
-        baseline_analysis = EconomicAnalysis(baseline)
-        optimized_analysis = EconomicAnalysis(optimized)
-        
-        baseline_cost = baseline_analysis.calculate_waste_cost(pricing_data)
-        optimized_cost = optimized_analysis.calculate_waste_cost(pricing_data)
-        
+        baseline_cost = EconomicAnalysis(baseline).calculate_waste_cost(pricing_data)
+        optimized_cost = EconomicAnalysis(optimized).calculate_waste_cost(pricing_data)
+
         savings = baseline_cost["total_waste_cost"] - optimized_cost["total_waste_cost"]
         savings_percent = 0.0
         if baseline_cost["total_waste_cost"] > 0:
             savings_percent = (savings / baseline_cost["total_waste_cost"]) * 100
-        
+
         return {
             "baseline_cost": baseline_cost["total_waste_cost"],
             "optimized_cost": optimized_cost["total_waste_cost"],
@@ -210,125 +240,118 @@ class EconomicAnalysis:
             "waste_reduction": baseline_cost["total_waste_quantity"] - optimized_cost["total_waste_quantity"],
             "currency": "USD",
         }
-    
+
     def calculate_total_cost_of_ownership(
         self,
         years: int = 10,
-        discount_rate: float = 0.05
+        discount_rate: float = 0.05,
     ) -> Dict[str, Any]:
         """
-        Calculate Total Cost of Ownership (TCO) for the network.
-        
+        Total cost of ownership over ``years``.
+
+        TCO = capex + installation + NPV(annual opex) - PV(salvage value),
+        where opex is paid at the end of each year and salvage is received
+        at the end of the period.
+
         Args:
             years: Analysis period in years
-            discount_rate: Annual discount rate for NPV calculation
-            
+            discount_rate: Annual discount rate
+
         Returns:
-            TCO breakdown including CAPEX, OPEX, and waste costs
+            TCO and its parts
         """
         total_capex = 0.0
-        total_opex = 0.0
         total_installation = 0.0
+        annual_opex = 0.0
         total_salvage = 0.0
-        
+        discount_at_end = (1 + discount_rate) ** years
+
         for node in self.network.nodes.values():
             if not node.financials:
                 continue
-            
             total_capex += node.financials.capex.value
-            total_opex += node.financials.opex_annual.value * years
-            
+            annual_opex += node.financials.opex_annual.value
             if node.financials.installation:
                 total_installation += node.financials.installation.value
-            
             if node.financials.salvage_value:
-                # Discount salvage value to present value
-                salvage_pv = node.financials.salvage_value.value / ((1 + discount_rate) ** years)
-                total_salvage += salvage_pv
-        
-        # Calculate NPV of OPEX
-        opex_npv = 0.0
-        for year in range(1, years + 1):
-            annual_opex = sum(
-                node.financials.opex_annual.value
-                for node in self.network.nodes.values()
-                if node.financials
-            )
-            opex_npv += annual_opex / ((1 + discount_rate) ** year)
-        
+                total_salvage += node.financials.salvage_value.value / discount_at_end
+
+        opex_npv = sum(
+            annual_opex / (1 + discount_rate) ** year for year in range(1, years + 1)
+        )
         total_tco = total_capex + total_installation + opex_npv - total_salvage
-        
+
         return {
             "total_tco": total_tco,
             "capex": total_capex,
             "installation": total_installation,
+            "opex_annual": annual_opex,
             "opex_npv": opex_npv,
             "salvage_value_pv": total_salvage,
             "years": years,
             "discount_rate": discount_rate,
             "currency": "USD",
         }
-    
+
     def identify_hotspots(
         self,
         top_n: int = 5,
-        metric: str = "waste_rate"
+        metric: str = "waste_rate",
     ) -> Dict[str, Any]:
         """
-        Identify waste hotspots in the network.
-        
+        Rank nodes and edges by loss.
+
+        ``waste_quantity`` uses the same capacity-based estimate as
+        ``calculate_waste_cost`` (node capacity x count x rate, edge max_rate
+        x rate).
+
         Args:
-            top_n: Number of top hotspots to return
-            metric: Metric to rank by ("waste_rate", "waste_quantity", "waste_cost")
-            
+            top_n: Number of hotspots to return
+            metric: "waste_rate" or "waste_quantity"
+
         Returns:
-            List of hotspots with their details
+            Dict with the top hotspots, the number analyzed, and the metric
+
+        Raises:
+            ValueError: on an unknown metric
         """
+        if metric not in HOTSPOT_METRICS:
+            raise ValueError(f"metric must be one of {HOTSPOT_METRICS}, got {metric!r}")
+
         hotspots = []
-        
-        # Analyze nodes
+
         for node_id, node in self.network.nodes.items():
-            if not node.properties.waste_rate:
+            waste_rate = self.network.node_transfer(node_id).waste_rate
+            if not waste_rate:
                 continue
-            
-            waste_rate = node.properties.waste_rate
-            waste_quantity = node.properties.capacity.value * waste_rate
-            
             hotspots.append({
                 "type": "node",
                 "id": node_id,
                 "name": node.name,
                 "node_class": node.node_class,
+                "kind": node.node_type,
                 "waste_rate": waste_rate,
-                "waste_quantity": waste_quantity,
+                "waste_quantity": node.properties.capacity.value * node.properties.count * waste_rate,
             })
-        
-        # Analyze edges
+
         for edge_id, edge in self.network.edges.items():
-            if not edge.flow.waste_rate:
+            waste_rate = self.network.edge_transfer(edge).waste_rate
+            if not waste_rate:
                 continue
-            
             source_node = self.network.get_node(edge.source_node_id)
             target_node = self.network.get_node(edge.target_node_id)
-            
-            waste_rate = edge.flow.waste_rate
-            waste_quantity = edge.flow.max_rate.value * waste_rate
-            
             hotspots.append({
                 "type": "edge",
                 "id": edge_id,
                 "source": source_node.name if source_node else edge.source_node_id,
                 "target": target_node.name if target_node else edge.target_node_id,
+                "kind": edge.relationship_type,
                 "waste_rate": waste_rate,
-                "waste_quantity": waste_quantity,
+                "waste_quantity": edge.flow.max_rate.value * waste_rate,
             })
-        
-        # Sort by metric
-        if metric == "waste_quantity":
-            hotspots.sort(key=lambda x: x.get("waste_quantity", 0), reverse=True)
-        else:
-            hotspots.sort(key=lambda x: x.get("waste_rate", 0), reverse=True)
-        
+
+        hotspots.sort(key=lambda x: x[metric], reverse=True)
+
         return {
             "hotspots": hotspots[:top_n],
             "total_analyzed": len(hotspots),

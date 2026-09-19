@@ -3,17 +3,12 @@ advanced_ecosystem.py: Example implementation of advanced waste network analysis
 demonstrating complex node types, inventory management, and multi-dimensional edges.
 """
 
-import sys
-import os
 from pathlib import Path
+
 import matplotlib.pyplot as plt
 import networkx as nx
-import numpy as np
 
-# Add the src directory to Python path
-sys.path.append(str(Path(__file__).parent.parent / 'src'))
-
-from advanced_network import (
+from ecoanalyst.legacy.advanced_network import (
     AdvancedWasteNetwork, InitialProducer, FoodProcessor, FoodHandler,
     EndConsumer, SolutionProvider, InventoryEdge, ServiceEdge, CurrencyEdge,
     Inventory, StaticWaste, TimeBasedWaste, MultiVariableWaste
@@ -161,7 +156,9 @@ def main():
     
     # Visualize the network
     plt = visualize_advanced_network(network)
-    output_path = Path(__file__).parent.parent / 'data' / 'advanced_network_visualization.png'
+    output_dir = Path(__file__).parent / "output"
+    output_dir.mkdir(exist_ok=True)
+    output_path = output_dir / "advanced_network_visualization.png"
     plt.savefig(output_path)
     plt.close()
     
