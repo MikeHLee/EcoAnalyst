@@ -486,7 +486,9 @@ class CausalModel:
 
     # -- fitting -----------------------------------------------------------
 
-    def fit(self, data: Any, prior_scale: float = 10.0, max_iter: int = 100) -> Dict[str, int]:
+    def fit(
+        self, data: Any, prior_scale: float = 10.0, max_iter: int = 100, autoscale: bool = True,
+    ) -> Dict[str, int]:
         """Update each variable's equation from data.
 
         ``data`` maps variable names to 1-D arrays of equal length (a dict or
@@ -496,10 +498,18 @@ class CausalModel:
 
         The stated intercept and coefficients are the prior mean. For
         continuous, rate, and positive variables the prior is
-        normal-inverse-gamma with coefficient sd ``prior_scale`` x noise sd
-        and a prior noise sd of ``noise_sd``; the posterior is exact. For
-        binary variables the prior sd is ``prior_scale`` on the logit scale
-        and the posterior is a Laplace approximation.
+        normal-inverse-gamma and the posterior is exact; for binary variables
+        the posterior is a Laplace approximation on the logit scale.
+
+        With ``autoscale`` (the default) the prior is measured in the data's
+        own units, so the same data in other units gives the same fit in
+        those units: a parent's coefficient has prior sd ``prior_scale`` x
+        noise sd / sd(parent) (``prior_scale`` / sd(parent) for a binary
+        variable), and the prior noise sd is the variable's sample sd on the
+        link scale. With ``autoscale=False`` the prior noise sd is the
+        stated ``noise_sd`` and every coefficient has prior sd
+        ``prior_scale`` x noise sd (``prior_scale`` for binary), which is
+        informative when a variable or a parent is far from unit scale.
 
         Returns:
             Variable name -> number of rows used, for each fitted variable
@@ -517,13 +527,18 @@ class CausalModel:
             y_raw, parents = stack[rows, 0], stack[rows, 1:]
             design = np.column_stack([np.ones(len(y_raw)), parents])
             prior_mean = np.array([v.intercept] + [v.coefficients.get(p, 0.0) for p in v.parents])
+            # Prior sd of each term in units of (noise sd, or logit) per unit of the term.
+            term_scale = np.full(design.shape[1], float(prior_scale))
+            if autoscale:
+                term_scale[1:] = prior_scale / _spread(parents)
             if v.kind == "binary":
                 if not np.all(np.isin(y_raw, (0.0, 1.0))):
                     raise ValueError(f"{v.name}: binary data must be 0 or 1")
-                v.posterior = _laplace_logistic(design, y_raw, prior_mean, prior_scale, max_iter, v.terms())
+                v.posterior = _laplace_logistic(design, y_raw, prior_mean, term_scale, max_iter, v.terms())
             else:
                 y = np.asarray(link(v.kind, y_raw), dtype=float)
-                v.posterior = _normal_inverse_gamma(design, y, prior_mean, prior_scale, v.noise_sd, v.terms())
+                noise_prior = float(_spread(y[:, None])[0]) if autoscale and len(y) > 1 else v.noise_sd
+                v.posterior = _normal_inverse_gamma(design, y, prior_mean, term_scale, noise_prior, v.terms())
             used[v.name] = int(rows.sum())
         return used
 
@@ -587,10 +602,17 @@ def _coefficients(v: CausalVariable, n: int, z_coef, u_scale, parameter_uncertai
     return mean + sigma[:, None] * draws, sigma
 
 
-def _normal_inverse_gamma(X, y, m0, prior_scale, noise_sd, terms) -> Posterior:
-    k = X.shape[1]
-    v0_inv = np.eye(k) / prior_scale**2
-    a0, b0 = 2.0, max(noise_sd, 1e-6) ** 2
+def _spread(columns: np.ndarray) -> np.ndarray:
+    """Sample sd of each column, with 1.0 for a constant column."""
+    sd = np.std(np.atleast_2d(columns.T).T, axis=0)
+    return np.where(sd > 0, sd, 1.0)
+
+
+def _normal_inverse_gamma(X, y, m0, term_scale, noise_sd, terms) -> Posterior:
+    """Conjugate update. Prior: beta | s2 ~ N(m0, s2 diag(term_scale^2)),
+    s2 ~ InverseGamma(2, noise_sd^2), so the prior mean of s2 is noise_sd^2."""
+    v0_inv = np.diag(1.0 / np.asarray(term_scale, dtype=float) ** 2)
+    a0, b0 = 2.0, max(noise_sd, 1e-12) ** 2
     precision = v0_inv + X.T @ X
     scale = np.linalg.inv(precision)
     scale = 0.5 * (scale + scale.T)
@@ -603,9 +625,9 @@ def _normal_inverse_gamma(X, y, m0, prior_scale, noise_sd, terms) -> Posterior:
     )
 
 
-def _laplace_logistic(X, y, m0, prior_scale, max_iter, terms) -> Posterior:
+def _laplace_logistic(X, y, m0, term_scale, max_iter, terms) -> Posterior:
     beta = m0.astype(float).copy()
-    prior_prec = np.eye(X.shape[1]) / prior_scale**2
+    prior_prec = np.diag(1.0 / np.asarray(term_scale, dtype=float) ** 2)
     for _ in range(max_iter):
         p = _sigmoid(X @ beta)
         grad = X.T @ (p - y) + prior_prec @ (beta - m0)

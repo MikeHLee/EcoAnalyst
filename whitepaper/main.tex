@@ -377,14 +377,18 @@ The function \code{fit} updates the equation of a variable $X$ when the data con
 \paragraph{Continuous, rate, and positive variables.}
 The prior is normal-inverse-gamma,
 \begin{equation}\label{eq:nigprior}
-    \boldsymbol\beta\mid s^2\sim\mathcal{N}\bigl(\mathbf{m}_0,\ s^2\lambda^2 I_p\bigr),\qquad s^2\sim\text{Inv-Gamma}\bigl(a_0,b_0\bigr),
+    \boldsymbol\beta\mid s^2\sim\mathcal{N}\bigl(\mathbf{m}_0,\ s^2\Lambda_0^{-1}\bigr),\qquad s^2\sim\text{Inv-Gamma}\bigl(a_0,b_0\bigr),
 \end{equation}
-with $a_0=2$ and $b_0=s_0^2$. Here $\mathbf{m}_0$ holds the stated intercept and coefficients, $s_0$ is the stated noise scale, and $\lambda$ is a prior scale with default value 10. Because $\mathbb{E}[s^2]=b_0/(a_0-1)=s_0^2$, the stated noise scale sets the prior mean of the noise variance, and the prior standard deviation of each coefficient is $\lambda$ times the noise scale. The posterior is normal-inverse-gamma with~\cite{gelman2013bda}
+with
+\begin{equation}\label{eq:autoscale}
+    \Lambda_0=\lambda^{-2}\operatorname{diag}\bigl(1,\sigma_1^2,\dots,\sigma_{p-1}^2\bigr),\qquad a_0=2,\qquad b_0=s_0^2.
+\end{equation}
+Here $\mathbf{m}_0$ holds the stated intercept and coefficients, $\lambda$ is a prior scale with default value 10, $\sigma_j$ is the sample standard deviation of the $j$th parent over the rows used (1 for a constant column), and $s_0$ is the sample standard deviation of $\mathbf{y}$. The prior standard deviation of the coefficient of parent $j$ is therefore $\lambda s/\sigma_j$, that is, $\lambda$ noise scales per standard deviation of the parent, and $\mathbb{E}[s^2]=b_0/(a_0-1)=s_0^2$. Both scales come from the data, so the prior carries the same weight whatever the units: a variable or a parent measured in other units gives the same fit expressed in those units. A prior with fixed scales does not have this property. For monthly changes of a logarithm, for example, the residual scale is of order $10^{-3}$, and a prior noise scale of 1 then dominates $b_n$ and inflates the noise scale by an order of magnitude. The option \code{autoscale=False} uses $\Lambda_0=\lambda^{-2}I_p$ and the stated noise scale as $s_0$. The posterior is normal-inverse-gamma with~\cite{gelman2013bda}
 \begin{align}
-    \Lambda_n&=\lambda^{-2}I_p+Z^{\top}Z, &
-    \mathbf{m}_n&=\Lambda_n^{-1}\bigl(\lambda^{-2}\mathbf{m}_0+Z^{\top}\mathbf{y}\bigr), \label{eq:nigpost1}\\
+    \Lambda_n&=\Lambda_0+Z^{\top}Z, &
+    \mathbf{m}_n&=\Lambda_n^{-1}\bigl(\Lambda_0\mathbf{m}_0+Z^{\top}\mathbf{y}\bigr), \label{eq:nigpost1}\\
     a_n&=a_0+\tfrac{n}{2}, &
-    b_n&=b_0+\tfrac12\bigl(\mathbf{y}^{\top}\mathbf{y}+\lambda^{-2}\mathbf{m}_0^{\top}\mathbf{m}_0-\mathbf{m}_n^{\top}\Lambda_n\mathbf{m}_n\bigr). \label{eq:nigpost2}
+    b_n&=b_0+\tfrac12\bigl(\mathbf{y}^{\top}\mathbf{y}+\mathbf{m}_0^{\top}\Lambda_0\mathbf{m}_0-\mathbf{m}_n^{\top}\Lambda_n\mathbf{m}_n\bigr). \label{eq:nigpost2}
 \end{align}
 This posterior is exact. To draw the parameters for one sample, the library computes
 \begin{align*}
@@ -394,10 +398,10 @@ This posterior is exact. To draw the parameters for one sample, the library comp
 so that $s^2\sim\text{Inv-Gamma}(a_n,b_n)$. Without parameter uncertainty it uses $\mathbf{m}_n$ and the noise scale $\sqrt{b_n/(a_n-1)}$.
 
 \paragraph{Binary variables.}
-The prior is $\boldsymbol\beta\sim\mathcal{N}(\mathbf{m}_0,\lambda^2 I_p)$. Newton's method finds the posterior mode $\hat{\boldsymbol\beta}$ with the gradient and Hessian of the negative log posterior $\ell$,
+The prior is $\boldsymbol\beta\sim\mathcal{N}(\mathbf{m}_0,\Lambda_0^{-1})$ with $\Lambda_0$ from~\eqref{eq:autoscale}, so the prior standard deviation of the coefficient of parent $j$ is $\lambda/\sigma_j$ on the logit scale. Newton's method finds the posterior mode $\hat{\boldsymbol\beta}$ with the gradient and Hessian of the negative log posterior $\ell$,
 \begin{align}
-    \nabla\ell(\boldsymbol\beta)&=Z^{\top}(\mathbf{p}-\mathbf{y})+\lambda^{-2}(\boldsymbol\beta-\mathbf{m}_0), \nonumber\\
-    \nabla^2\ell(\boldsymbol\beta)&=Z^{\top}\operatorname{diag}\bigl(\mathbf{p}\odot(1-\mathbf{p})\bigr)Z+\lambda^{-2}I_p, \label{eq:newton}
+    \nabla\ell(\boldsymbol\beta)&=Z^{\top}(\mathbf{p}-\mathbf{y})+\Lambda_0(\boldsymbol\beta-\mathbf{m}_0), \nonumber\\
+    \nabla^2\ell(\boldsymbol\beta)&=Z^{\top}\operatorname{diag}\bigl(\mathbf{p}\odot(1-\mathbf{p})\bigr)Z+\Lambda_0, \label{eq:newton}
 \end{align}
 where $\mathbf{p}=\expit(Z\boldsymbol\beta)$. It stops after 100 iterations or when the largest step is below $10^{-10}$. The Laplace approximation to the posterior is $\boldsymbol\beta\mid\text{data}\approx\mathcal{N}\bigl(\hat{\boldsymbol\beta},[\nabla^2\ell(\hat{\boldsymbol\beta})]^{-1}\bigr)$~\cite{gelman2013bda}.
 
@@ -511,19 +515,19 @@ where $T$, $O$, $U_c$, $S_s$, and $S_t$ are temperature, outage, uptime, store s
 Equation & Term & Generating value & Posterior mean \\
 \midrule
 \code{ambient\_temp} & intercept & 24 & 23.964 \\
- & noise scale & 4 & 3.762 \\
-\code{power\_outage} & intercept & $-9.0$ & $-8.402$ \\
+ & noise scale & 4 & 3.761 \\
+\code{power\_outage} & intercept & $-9.0$ & $-8.399$ \\
  & \code{ambient\_temp} & 0.25 & 0.219 \\
 \code{cooling\_uptime} & intercept & 3.5 & 3.502 \\
- & \code{power\_outage} & $-3.0$ & $-3.052$ \\
- & noise scale & 0.3 & 0.306 \\
-\code{store\_spoilage} & intercept & $-3.0$ & $-2.821$ \\
+ & \code{power\_outage} & $-3.0$ & $-3.053$ \\
+ & noise scale & 0.3 & 0.302 \\
+\code{store\_spoilage} & intercept & $-3.0$ & $-2.804$ \\
  & \code{ambient\_temp} & 0.08 & 0.073 \\
- & \code{cooling\_uptime} & $-4.0$ & $-4.021$ \\
- & noise scale & 0.2 & 0.220 \\
+ & \code{cooling\_uptime} & $-4.0$ & $-4.037$ \\
+ & noise scale & 0.2 & 0.209 \\
 \code{truck\_spoilage} & intercept & $-3.8$ & $-3.891$ \\
  & \code{ambient\_temp} & 0.10 & 0.103 \\
- & noise scale & 0.2 & 0.216 \\
+ & noise scale & 0.2 & 0.206 \\
 \bottomrule
 \end{tabular}
 \caption{Fitted equations of the cold-chain example on the link scale (365 records). The noise scale column shows $\sqrt{b_n/(a_n-1)}$. The binary equation for \code{power\_outage} uses the Laplace approximation and has no noise scale.}
@@ -550,20 +554,20 @@ Quantity & Mean & \multicolumn{3}{c}{Percentiles} & Share \\
 \cmidrule(lr){3-5}
  & & 5th & 50th & 95th & $>0$ \\
 \midrule
-$D(\pi^*)$, no intervention & 0.811 & 0.797 & 0.808 & 0.844 & \\
-$\Delta_i$ for $D(\pi^*)$: $do(O=0)$ vs.\ none & 0.0014 & 0.0000 & 0.0000 & 0.0104 & 5.6\% \\
-$\Delta_i$ for $L_{\mathrm{cap}}$: $do(T=32)$ vs.\ $do(T=24)$ & 45.6 & 25.6 & 31.4 & 124.2 & 100\% \\
+$D(\pi^*)$, no intervention & 0.810 & 0.796 & 0.808 & 0.843 & \\
+$\Delta_i$ for $D(\pi^*)$: $do(O=0)$ vs.\ none & 0.0014 & 0.0000 & 0.0000 & 0.0109 & 5.6\% \\
+$\Delta_i$ for $L_{\mathrm{cap}}$: $do(T=32)$ vs.\ $do(T=24)$ & 45.6 & 25.8 & 31.3 & 124.3 & 100\% \\
 \bottomrule
 \end{tabular}
-\caption{Simulation results for the cold-chain example ($n=4000$, seed 1). The first row describes the delivered fraction of the best route without intervention. The other rows describe the per-sample differences $\Delta_i$, whose mean is the effect estimate $\hat\tau$ of~\eqref{eq:tauhat}. Under $do(T=32)$ and $do(T=24)$ the mean costs are 243.9 and 198.3.}
+\caption{Simulation results for the cold-chain example ($n=4000$, seed 1). The first row describes the delivered fraction of the best route without intervention. The other rows describe the per-sample differences $\Delta_i$, whose mean is the effect estimate $\hat\tau$ of~\eqref{eq:tauhat}. Under $do(T=32)$ and $do(T=24)$ the mean costs are 243.9 and 198.2.}
 \label{tab:effects}
 \end{table}
 
-Without intervention, the median delivered fraction is 0.808, above the stated-parameter value 0.789. The data move the loss rate of the cold store from the stated 3\% to a median of 0.7\% across samples. In 19.9\% of the samples the router chooses the direct truck. These samples have a mean temperature of $19.5\,^\circ$C, the truck loses less on such days, and they form the upper tail of the delivered fraction.
+Without intervention, the median delivered fraction is 0.808, above the stated-parameter value 0.789. The data move the loss rate of the cold store from the stated 3\% to a median of 0.7\% across samples. In 19.6\% of the samples the router chooses the direct truck. These samples have a mean temperature of $19.4\,^\circ$C, the truck loses less on such days, and they form the upper tail of the delivered fraction.
 
-Backup power, $do(O=0)$, raises the delivered fraction by 0.0014 on average. The effect is small because outages are rare: the fitted outage probability at $24\,^\circ$C is $\expit(-8.402+0.219\cdot 24)=0.042$. In most samples no outage occurs under the model, so $\Delta_i=0$. The 5.6\% of samples with $\Delta_i>0$ are samples with an outage in which the router uses the cold chain, and their mean difference is about 0.025. The mean alone does not show that the benefit is concentrated on a small share of the days.
+Backup power, $do(O=0)$, raises the delivered fraction by 0.0014 on average. The effect is small because outages are rare: the fitted outage probability at $24\,^\circ$C is $\expit(-8.399+0.219\cdot 24)=0.042$. In most samples no outage occurs under the model, so $\Delta_i=0$. The 5.6\% of samples with $\Delta_i>0$ are samples with an outage in which the router uses the cold chain, and their mean difference is about 0.025. The mean alone does not show that the benefit is concentrated on a small share of the days.
 
-A heat wave, $do(T=32)$ against $do(T=24)$, raises the capacity-based cost by 45.6 per day. Temperature reaches the cost through three directed paths: directly to \code{store\_spoilage}, through \code{power\_outage} and \code{cooling\_uptime} to \code{store\_spoilage}, and to \code{truck\_spoilage}. The right tail of $\Delta_i$ (95th percentile 124.2 against a median of 31.4) comes from samples in which the higher temperature produces an outage that does not occur at $24\,^\circ$C. Both interventions set values that occur in the records, so assumption (A3) holds for them.
+A heat wave, $do(T=32)$ against $do(T=24)$, raises the capacity-based cost by 45.6 per day. Temperature reaches the cost through three directed paths: directly to \code{store\_spoilage}, through \code{power\_outage} and \code{cooling\_uptime} to \code{store\_spoilage}, and to \code{truck\_spoilage}. The right tail of $\Delta_i$ (95th percentile 124.3 against a median of 31.3) comes from samples in which the higher temperature produces an outage that does not occur at $24\,^\circ$C. Both interventions set values that occur in the records, so assumption (A3) holds for them.
 
 \section{Implementation}\label{sec:impl}
 
