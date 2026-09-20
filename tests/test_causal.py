@@ -136,6 +136,65 @@ def test_posterior_narrows_with_more_data():
     assert sd(large) < sd(small) / 4
 
 
+def small_scale_data(n=300, seed=3, unit=1e-3):
+    """y = 0.8 x + e with x and e both of order ``unit`` (e.g. monthly log changes)."""
+    rng = np.random.default_rng(seed)
+    x = rng.normal(0, 3 * unit, n)
+    y = 0.8 * x + rng.normal(0, unit, n)
+    return {"x": x, "y": y}
+
+
+def xy_model():
+    m = CausalModel()
+    m.add_variable("x")
+    m.add_variable("y", parents=["x"])
+    return m
+
+
+def ols(data):
+    X = np.column_stack([np.ones(len(data["x"])), data["x"]])
+    beta, *_ = np.linalg.lstsq(X, data["y"], rcond=None)
+    resid = data["y"] - X @ beta
+    return beta, resid.std(ddof=2)
+
+
+def test_autoscaled_prior_matches_least_squares_at_any_scale():
+    for unit in (1e-3, 1.0, 1e3):
+        data = small_scale_data(unit=unit)
+        m = xy_model()
+        m.fit(data)
+        beta, sd = ols(data)
+        post = m.variables["y"].posterior
+        assert post.mean[1] == pytest.approx(beta[1], rel=1e-3)
+        assert post.noise_sd() == pytest.approx(sd, rel=0.03)
+
+
+def test_unscaled_prior_distorts_small_scale_data():
+    """Negative control: with the prior in fixed units, data of order 1e-3 is
+    swamped (noise sd pulled toward 1, slope shrunk toward 0)."""
+    data = small_scale_data(unit=1e-3)
+    m = xy_model()
+    m.fit(data, autoscale=False)
+    beta, sd = ols(data)
+    post = m.variables["y"].posterior
+    assert post.noise_sd() > 10 * sd
+    assert post.mean[1] < 0.5 * beta[1]
+
+
+def test_binary_fit_is_equivariant_to_the_parent_unit():
+    rng = np.random.default_rng(5)
+    t = rng.normal(0, 1, 2000)
+    flag = (rng.random(2000) < 1 / (1 + np.exp(-(-2 + 1.5 * t)))).astype(float)
+    slopes = []
+    for unit in (1.0, 1e-3):
+        m = CausalModel()
+        m.add_variable("t")
+        m.add_variable("flag", kind="binary", parents=["t"])
+        m.fit({"t": t * unit, "flag": flag}, prior_scale=0.5)
+        slopes.append(m.variables["flag"].posterior.mean[1] * unit)
+    assert slopes[0] == pytest.approx(slopes[1], rel=1e-6)
+
+
 def test_fit_skips_missing_columns_and_rows():
     m = fit_model()
     data = synthetic(500)
